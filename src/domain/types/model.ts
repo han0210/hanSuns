@@ -80,6 +80,13 @@ export type ExerciseProfile = {
   readonly currentTM: number | null;
   /** T3 작업 중량. T1·T2 전용 운동이면 null */
   readonly t3WorkingWeight: number | null;
+  /**
+   * t3WorkingWeight가 바뀔 때마다 1씩 증가하는 변경 번호 (최초 0).
+   * 세션 시작 시 SessionExercise.workingWeightRevisionAtSession으로 복사해 두고, 세션 완료 시 번호가 같을 때만
+   * 자동 증량을 반영한다. 세션 도중 사용자가 값을 바꿨다면(같은 값으로 되돌렸더라도) 사용자 값을 우선한다 (U-22).
+   * 시각 비교 대신 번호를 쓰는 이유: 휴대폰 시계가 바뀌어도 판단이 흔들리지 않는다.
+   */
+  readonly t3WorkingWeightRevision: number;
   readonly updatedAt: IsoDateTime;
 };
 
@@ -114,10 +121,22 @@ export type SessionExercise = {
   readonly tmAtSession: number | null;
   /** T3: 세션 시작 시점 작업 중량 */
   readonly workingWeightAtSession: number | null;
+  /** T3: 세션 시작 시점 ExerciseProfile.t3WorkingWeightRevision (U-22 판단용). T1·T2는 null */
+  readonly workingWeightRevisionAtSession: number | null;
+  /**
+   * 세션 안 표시 순서 (0부터). 세션 생성 시 계획 순서대로 저장하며, 조회는 이 값으로 정렬한다.
+   * 같은 세션 안에서 유일하다.
+   */
+  readonly displayOrder: number;
   readonly restSeconds: number;
   /** 운동별 전체 세트 리셋 이력 */
   readonly resetCount: number;
   readonly lastResetAt: IsoDateTime | null;
+  /**
+   * 하루 세션 완료 시 이 운동의 증량 판정을 마친 시각 (CALCULATION_RULES 9.3 멱등성).
+   * 판정 규칙이 확정된 운동(현재 T3 FST-7)만 기록하며, 이미 값이 있으면 다시 판정하지 않는다.
+   */
+  readonly progressionEvaluatedAt: IsoDateTime | null;
 };
 
 type SetRecordBase = {

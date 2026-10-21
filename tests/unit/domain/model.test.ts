@@ -28,6 +28,7 @@ const profile: ExerciseProfile = {
   initialTM: 69.3,
   currentTM: 69.3,
   t3WorkingWeight: null,
+  t3WorkingWeightRevision: 0,
   updatedAt: "2026-10-21T00:00:00.000Z",
 };
 
@@ -52,9 +53,12 @@ const sessionExercise: SessionExercise = {
   templateVersion: null,
   tmAtSession: 69.3,
   workingWeightAtSession: null,
+  workingWeightRevisionAtSession: null,
+  displayOrder: 0,
   restSeconds: 180,
   resetCount: 0,
   lastResetAt: null,
+  progressionEvaluatedAt: null,
 };
 
 const base = {

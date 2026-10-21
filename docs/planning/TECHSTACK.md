@@ -1,6 +1,6 @@
 # nSuns Hybrid — TECHSTACK.md
 
-> **버전:** v1.6 (2026-10-21, Vitest 도입·도메인 폴더 반영)  
+> **버전:** v1.8 (2026-10-21, 완료 세트 잠금 강화·세션 완료 조건 반영 / v1.7 STEP 09 Dexie 저장 계층 구현 / v1.6 Vitest 도입·도메인 폴더 반영)  
 > **상태:** 기술 스택 권장안 / 개발 전 계산 템플릿 검증 필요  
 > **상위 문서:** `docs/planning/PTS.md`, `docs/planning/PRD.md`, `docs/planning/FUNCTIONS.md`  
 > **권장 저장 경로:** `docs/planning/TECHSTACK.md`  
@@ -27,7 +27,7 @@
 | 스타일링 | Tailwind CSS | 모바일 반응형 화면 구현과 스타일 관리 |
 | 컴포넌트 | 자체 UI 컴포넌트 우선 | MVP 의존성 최소화; 필요시 접근성 검증된 라이브러리 선택 |
 | 계산 엔진 | 순수 TypeScript | 계산의 결정성, 단위 테스트, UI 독립성 |
-| 로컬 DB | IndexedDB + Dexie | 운동 기록 같은 구조화 데이터의 조회·갱신·버전 관리 |
+| 로컬 DB | IndexedDB + Dexie (`dexie@4.4.6`, 버전 고정) | 운동 기록 같은 구조화 데이터의 조회·갱신·버전 관리 |
 | 상태 관리 | React state/context 중심 | 소규모 MVP에서 불필요한 전역 상태 도입 회피 |
 | 스키마 검증 | Zod(권장) | 사용자 입력 및 백업 파일 데이터 검증 |
 | 단위 테스트 | Vitest | TM, 세트 계산, 증량, 반올림 경계값 검증 |
@@ -229,6 +229,19 @@ Dexie를 이용해 IndexedDB에 다음 데이터를 보관한다.
 - **완료·중도 종료 세션:** COMPLETED(U-14)·ABANDONED(U-15) 세션의 운동 리셋은 정책이 확정될 때까지 저장 계층에서 거부한다.
 - **사용자 확인과 저장의 분리:** 확인 모달은 UI 책임이며, 저장 계층은 확인 이후에 호출된다.
 
+#### STEP 09 구현 메모 (v1.7)
+
+- **파일:** `src/storage/db.ts`(스키마 v1·완료 세트 잠금 훅·`getBrowserDatabase()`), `src/storage/result.ts`(결과 타입), `src/storage/ids.ts`(ID·시각), `src/storage/repositories/{exerciseRepository,workoutRepository}.ts`. 스키마·인덱스는 DATAMODEL 6.1, API는 FUNCTIONS 10.3.1.
+- **SSR 안전:** 모듈을 불러오는 것만으로 IndexedDB를 열지 않는다. `getBrowserDatabase()`는 `window`·`indexedDB`가 없으면 `null`을 돌려주므로 서버 렌더링·빌드에서 오류가 나지 않는다. 클라이언트 컴포넌트의 이벤트·effect 안에서만 호출한다.
+- **트랜잭션 패턴:** 각 함수는 `rw` 트랜잭션 하나에서 ① 최신 상태 재조회 ② 모든 검증(실패 시 쓰기 없이 오류 결과 반환) ③ 쓰기 순서로 동작한다. 쓰기 중 예외가 나면 Dexie가 트랜잭션 전체를 롤백하고 `STORAGE_ERROR`를 돌려준다. 트랜잭션 안에서는 Dexie 이외의 비동기 작업(fetch, setTimeout)을 하지 않는다.
+- **다중 탭:** IndexedDB `readwrite` 트랜잭션은 같은 테이블을 쓰는 다른 트랜잭션(다른 탭 포함)과 순서대로 실행된다. 따라서 트랜잭션 안의 재확인으로 중복 완료·중복 세션·중복 증량을 막는다. 다른 탭 화면의 자동 갱신(liveQuery 등)은 아직 없다.
+- **이중 잠금 (v1.8 강화):** 완료 세트는 서비스 검증과 테이블 훅(`creating`·`updating`·`deleting`)으로 막는다. 훅은 `resetSessionExercise()`가 세션 상태를 검증한 뒤 같은 트랜잭션에 남긴 리셋 허가(트랜잭션 객체 키의 WeakMap)가 있고, 허가된 운동의 세트를, 정확히 4개 필드만 초기화하는 경우에만 통과시킨다. Dexie 훅은 `put`·`bulkPut`·`modify`·`delete`·`bulkDelete`·`where().delete()`·`clear()` 경로 모두에서 실행됨을 테스트로 확인했다. 개발자 도구를 통한 IndexedDB 직접 조작은 막을 수 없다(DATAMODEL 5장).
+- **세션 완료 (v1.8):** `completeWorkoutSession()`은 모든 세트가 완료된 경우에만 COMPLETED로 바꾼다(U-21). 중도 종료(ABANDONED) 함수는 후속 단계다.
+- **스키마 버전:** v1.8의 필드·인덱스 추가(`displayOrder` 등)는 저장 계층이 UI에 연결되기 전이라 버전 1을 유지했다. UI 연결 후의 변경부터는 버전을 올리고 마이그레이션을 작성한다.
+- **입력 검증 위치:** 문서의 `validateSetCompletion()` 순수 함수는 아직 분리하지 않았다. 현재는 `completeSet()`·`updateSetDraft()`가 같은 규칙(중량: 세트 단위의 양수, 반복: 0 이상 정수)을 직접 검증한다. UI 연결 시 순수 함수로 분리해 화면 즉시 검증과 공유할지 결정한다.
+- **모바일 저장소 위험:** IndexedDB는 브라우저가 지울 수 있다(사이트 데이터 삭제, 시크릿 모드 종료, 저장 공간 부족 시 정리, iOS Safari의 장기간 미사용 사이트 데이터 정리). 저장 계층은 이를 막을 수 없으므로 ① 저장 실패를 화면에 표시하고 ② 데이터 손실 가능성을 안내하며 ③ JSON 백업을 후속 기능으로 둔다. `navigator.storage.persist()` 요청 여부와 실제 동작은 실기기 QA 후 결정한다. PWA는 이번 단계 범위가 아니다.
+- **테스트 한계:** `fake-indexeddb@6.2.5`(devDependency)는 Node 메모리에서 IndexedDB API를 흉내 내므로 트랜잭션·인덱스·롤백 동작을 검증할 수 있지만, iOS Safari·Android Chrome의 저장 공간 제한·자동 삭제 정책·백그라운드 탭 동작은 재현하지 않는다. 실제 저장·복원은 실기기 QA로 확인해야 한다.
+
 ---
 
 ## 6. 테스트 전략
@@ -237,7 +250,7 @@ Dexie를 이용해 IndexedDB에 다음 데이터를 보관한다.
 |---|---|---|
 | 단위 | Vitest | `initialTM=1RM×0.9`, 반올림(중간값 상향), T1/T2 세트 생성, 동일 exerciseId TM 공유, 증량 중복 방지, FST-7 성공 판정 |
 | 컴포넌트 | React Testing Library | 운동 변경, 신규 기준 중량 요청, 세트 체크박스(저장 중·성공·실패 표시, 해제 불가), 세트 완료 전 수정·완료 후 잠금, 운동 리셋 확인·취소, 타이머 조작 |
-| 통합 | Vitest + IndexedDB 테스트 환경 | 저장·복원·마이그레이션, 과거 기록 불변성, 세트 완료 저장 실패 시 미완료 유지, 중복 체크 거부, 완료 세트 잠금, 운동 리셋 원자성·롤백, 다른 운동 기록 불변, 완료·중도 종료 세션의 운동 리셋 거부 |
+| 통합 | Vitest + fake-indexeddb (`tests/unit/storage/`, v1.7 구현) | 저장·복원·마이그레이션, 과거 기록 불변성, 세트 완료 저장 실패 시 미완료 유지, 중복 체크 거부, 완료 세트 잠금, 운동 리셋 원자성·롤백, 다른 운동 기록 불변, 완료·중도 종료 세션의 운동 리셋 거부 |
 | E2E | Playwright | 320 / 390 / 430 / 768 / 1024px에서 초기 설정 → 운동 변경 → 7세트 완료 → 새로고침 복원. Chromium 외 WebKit 엔진 포함 검토 |
 | 실기기 수동 QA | iPhone Safari, Android Chrome | 숫자 키패드, 입력 자동 확대, Safe Area, 백그라운드 타이머, IndexedDB 저장·복원 (FRONTEND.md 10.1) |
 
@@ -246,6 +259,8 @@ Dexie를 이용해 IndexedDB에 다음 데이터를 보관한다.
 - 5.x가 아닌 4.1.x를 고른 이유: 5.x는 `@types/node` ^22 이상을 요구해 기존 `@types/node` ^20을 바꿔야 한다.
 - npm 10.9 환경에서 `npm install vitest`가 내부 오류(`edgesOut`)로 실패해, 잠금 파일은 npm 11로 생성했다. 기존 패키지 버전은 바뀌지 않았고, 생성된 잠금 파일은 npm 10의 `npm ci`로 설치됨을 확인했다.
 - 도메인 코드: `src/domain/types/`(데이터 모델·단위), `src/domain/calculations/`(순수 계산). 화면·저장소에 의존하지 않는다.
+
+**저장 계층 테스트 (v1.7):** `fake-indexeddb@6.2.5`를 devDependency로 추가했다. 테스트는 전역 `indexedDB`를 바꾸지 않고 DB 생성 시 Dexie 옵션으로 주입하며, 테스트마다 이름이 다른 DB를 만들고 끝나면 삭제한다. 통합 성격이지만 기존 Vitest `include`(`tests/unit/**`)를 바꾸지 않기 위해 `tests/unit/storage/`에 둔다. 강제 실패(롤백) 테스트는 Dexie 테이블 훅에서 예외를 던져 만든다.
 
 **필수 테스트 원칙**
 

@@ -1,7 +1,7 @@
 # nSuns Hybrid — FUNCTIONS.md
 
 > **프로젝트:** nSuns Hybrid 5-Day
-> **버전:** v1.9 (2026-10-21, 덤벨 한 손 기준 확정(U-19) / v1.8 Exercise·ExerciseProfile 분리, camelCase 확정, DIRECT 의미 명시, `CALCULATION_RULES.md` v0.10 기준)
+> **버전:** v1.11 (2026-10-21, 세션 완료 조건(U-21)·세션 중 T3 수정 우선(U-22) 확정, 표시 순서 / v1.10 STEP 09 로컬 저장 계층 구현 반영 / v1.9 덤벨 한 손 기준 확정(U-19) / v1.8 Exercise·ExerciseProfile 분리, camelCase 확정, DIRECT 의미 명시, `CALCULATION_RULES.md` v0.12 기준)
 > **상태:** 기능 명세 초안 / 계산 템플릿 검증 대기
 > **기준 문서:** `docs/planning/PTS.md`, `docs/planning/PRD.md`
 > **목표:** 무료 모바일 웹 기반 운동 프로그램 관리 서비스
@@ -465,6 +465,15 @@ T3는 1RM 대신 작업 중량을 입력한다.
 
 중도 종료된 기록도 보존하고 재개 가능 여부를 구분한다.
 
+**완료와 중도 종료의 구분 (U-21 확정, v1.11):**
+
+| 상태 | 전환 조건 | 증량 |
+|---|---|---|
+| COMPLETED | 세션의 **모든 예정 세트**가 완료(`completed = true`)된 경우에만 허용. 미완료 세트가 하나라도 있으면 완료 요청을 거부한다(`SESSION_HAS_INCOMPLETE_SETS`) | 완료 시점에 판정 (T3 FST-7) |
+| ABANDONED | 사용자가 세션을 중간에 끝내는 경우. 완료와 별도의 작업으로 처리한다(구현은 후속 단계) | 판정하지 않음. 미완료 세션에는 T3 자동 증량을 적용하지 않는다 |
+
+중도 종료 세션의 재개·리셋 정책은 U-15로 계속 관리한다.
+
 하루 세션 상태와 별도로, 세션 안의 운동(SessionExercise)은 NOT_STARTED / IN_PROGRESS / COMPLETED 진행 상태를 가진다. 이 상태는 소속 세트의 완료 여부(없음 / 일부 / 전부)로 계산할 수 있다. 운동별 리셋은 하루 세션 상태를 변경하지 않는다.
 
 ### 9.4 운동별 전체 세트 리셋
@@ -536,6 +545,32 @@ MVP는 회원가입 없이 브라우저에 데이터를 저장한다.
 - 브라우저 데이터 삭제 시 기록이 사라질 수 있음을 안내한다.
 - 저장 오류가 발생하면 사용자에게 표시한다.
 
+### 10.3.1 저장 계층 구현 (STEP 09, v1.10)
+
+Dexie + IndexedDB로 구현했다(`src/storage/`). UI는 아직 연결하지 않았다.
+
+| 함수 (`src/storage/repositories/`) | 역할 | 주요 실패 코드 |
+|---|---|---|
+| `saveExercise()` / `getExercise()` | 운동 마스터 저장·조회 | `INVALID_INCREMENT`, `UNIT_CHANGE_NOT_ALLOWED`(프로필이 있는 운동의 단위 변경) |
+| `initializeExerciseProfile()` | Setup 확정 시 프로필 최초 생성 + INITIAL TM 이력 (한 트랜잭션) | `PROFILE_ALREADY_EXISTS`, `UNIT_MISMATCH`, `INVALID_SOURCE` |
+| `getExerciseProfile()` / `updateT3WorkingWeight()` | 프로필 조회, T3 작업 중량 직접 수정 (변경 번호 +1) | `PROFILE_NOT_FOUND`, `UNIT_MISMATCH` |
+| `applyTMChange()` / `listTMChanges()` | 계산된 TM 변경을 이력과 함께 기록, 이력 조회 | `SESSION_NOT_COMPLETED`, `DUPLICATE_PROGRESSION` |
+| `startWorkoutSession()` | 하루 세션 시작(IN_PROGRESS)과 스냅샷 고정, 계획 순서대로 `displayOrder` 저장, T3 FST-7 세트 생성 | `ACTIVE_SESSION_EXISTS`, `MISSING_SNAPSHOT_VALUE`, `INVALID_SESSION_PLAN` |
+| `getActiveSession()` / `getSessionDetail()` | 새로고침·재시작 후 진행 기록 복원 (12.1의 `restoreWorkoutSession()` 역할). 운동은 `displayOrder` 순 | — |
+| `updateSetDraft()` | 미완료 세트의 입력 중 값 저장 | `SET_LOCKED`, `SESSION_NOT_EDITABLE`, `INVALID_ACTUAL_*` |
+| `completeSet()` | 세트 완료 트랜잭션, 휴식 타이머 시작 신호 반환 | `SET_ALREADY_COMPLETED`, `SESSION_NOT_EDITABLE`, `INVALID_ACTUAL_*` |
+| `resetSessionExercise()` | 운동별 전체 세트 리셋 | `RESET_NOT_ALLOWED`, `SESSION_EXERCISE_NOT_FOUND` |
+| `completeWorkoutSession()` | 하루 세션 완료 + T3 FST-7 증량 판정·반영 | `SESSION_HAS_INCOMPLETE_SETS`(U-21), `SESSION_NOT_IN_PROGRESS` |
+
+- 모든 함수는 예외 대신 `{ ok: true, value }` / `{ ok: false, error, message? }`를 돌려준다. IndexedDB 자체 오류는 `STORAGE_ERROR`다.
+- UI는 저장 결과가 `ok`일 때만 완료로 표시한다(낙관적 완료 표시 금지).
+- 진행 중(IN_PROGRESS·PAUSED) 세션은 한 번에 하나다. 여러 탭에서 동시에 같은 작업을 해도 트랜잭션 안의 재확인으로 하나만 성공한다.
+- T1·T2 목표 세트는 호출자가 계산해 넘긴다(템플릿 미확정). 세션 완료 시 T1·T2는 증량 판정 없이 `pendingProgressions`로만 돌려준다.
+- 세트 입력·완료는 IN_PROGRESS에서만, 리셋은 IN_PROGRESS·PAUSED에서만 허용한다. 일시정지·재개·중도 종료(ABANDONED) 함수는 아직 없다(후속 단계).
+- 세션 완료는 모든 예정 세트가 완료되어야 한다(U-21). 거부되면 세션·세트·프로필 어느 것도 바뀌지 않는다.
+- 세션 도중 사용자가 T3 작업 중량을 바꿨다면 자동 증량으로 덮어쓰지 않고 사용자 값을 유지한다(U-22, `skippedReason: "PROFILE_CHANGED"`). 세션 시작 스냅샷과 완료 세트 기록은 어느 경우에도 바뀌지 않는다.
+- 완료 세트는 `resetSessionExercise()`를 통한 정상 리셋으로만 초기화된다. 직접 테이블 쓰기(update·put·delete·clear 등)는 저장 계층에서 거부한다. 단, 사용자가 브라우저 개발자 도구로 로컬 DB를 직접 조작하는 것까지 막지는 못한다(DATAMODEL 5장).
+
 ### 10.4 데이터 백업
 
 로컬 저장의 데이터 손실 위험을 고려하여 JSON 내보내기·가져오기 기능을 후속 요구사항으로 관리한다.
@@ -575,12 +610,14 @@ MVP는 회원가입 없이 브라우저에 데이터를 저장한다.
   "initialTM": 90,
   "currentTM": 90,
   "t3WorkingWeight": null,
+  "t3WorkingWeightRevision": 0,
   "updatedAt": "2026-10-20T00:00:00.000Z"
 }
 ```
 
 - `initialTM`은 `oneRepMax × 0.9`로 재계산 가능한 파생값이다. `currentTM`은 AMRAP 증량 이후 1RM에서 재계산할 수 없으므로 독립 저장값으로 관리한다.
 - 프로필은 exerciseId당 하나이며, T1과 T2에서 같은 운동을 쓰면 같은 프로필을 참조한다.
+- `t3WorkingWeightRevision`은 T3 작업 중량이 바뀔 때마다 1씩 오르는 변경 번호다(v1.11 추가, 사용자 수정·자동 증량 모두). 같은 값을 다시 저장해도 오른다.
 - `weightUnit`은 프로필 값들의 단위이며 Exercise의 `weightUnit`과 같아야 한다.
 - `oneRepMaxSource: "DIRECT"`는 사용자가 1RM을 **직접 입력**했다는 뜻이며, 실제 측정이 검증되었다는 뜻이 아니다.
 
@@ -644,9 +681,12 @@ MVP는 회원가입 없이 브라우저에 데이터를 저장한다.
   "templateVersion": null,
   "tmAtSession": 50,
   "workingWeightAtSession": null,
+  "workingWeightRevisionAtSession": null,
+  "displayOrder": 1,
   "restSeconds": 120,
   "resetCount": 0,
-  "lastResetAt": null
+  "lastResetAt": null,
+  "progressionEvaluatedAt": null
 }
 ```
 
@@ -654,6 +694,11 @@ MVP는 회원가입 없이 브라우저에 데이터를 저장한다.
 - 한 세션 안에서 `(sessionId, exerciseId, tier)` 조합은 하나만 존재한다. 이 조합은 기존 증량 멱등성 키와 1:1로 대응한다.
 - `tmAtSession`은 T1·T2, `workingWeightAtSession`은 T3에서 사용한다.
 - 현재 세트 위치(`currentSetIndex`)와 운동 진행 상태는 저장하지 않는다. 소속 세트의 완료 여부로 계산한다. 저장값과 실제 세트 상태가 어긋나는 문제를 막기 위함이다.
+- `displayOrder`는 세션 안 표시 순서(0부터)다(v1.11 추가). 세션 생성 시 계획 순서대로 저장하고, 조회는 ID 문자열이 아닌 이 값으로 정렬한다. 같은 세션 안에서 유일하다.
+- `workingWeightRevisionAtSession`은 T3 세션 시작 시점의 프로필 `t3WorkingWeightRevision`이다(v1.11 추가). 세션 완료 시 프로필 번호와 같을 때만 자동 증량을 반영한다(U-22).
+- 같은 세션에 같은 운동을 다른 티어로 넣는 것(예: T1·T2 모두 OHP)은 허용한다. 같은 운동·같은 티어를 두 번 넣는 계획은 거부한다.
+- `progressionEvaluatedAt`은 하루 세션 완료 시 이 운동의 증량 판정을 마친 시각이다(v1.10 추가). 판정 규칙이 확정된 운동(현재 T3 FST-7)만 기록하며, 값이 있으면 다시 판정하지 않는다.
+- 실제 저장 ID 형식은 `${sessionId}:${tier}:${exerciseId}`다(DATAMODEL 6.1). 위 예시 ID는 설명용이다.
 - 위 수치와 null 템플릿 값은 구조 설명용이며 검증된 템플릿·TM 값이 아니다.
 
 ### 11.5 TMChange
@@ -680,7 +725,7 @@ MVP는 회원가입 없이 브라우저에 데이터를 저장한다.
 
 ### 11.6 수정 차단의 책임
 
-타입의 `readonly`와 완료 세트 타입 구분은 **컴파일 시점** 제약이다. 저장된 데이터의 실제 수정 차단(완료 세트 수정 거부, 운동별 리셋만 허용, 완료·중도 종료 세션 리셋 거부)은 STEP 09의 서비스 계층과 Dexie 트랜잭션에서 구현하고 테스트로 검증한다.
+타입의 `readonly`와 완료 세트 타입 구분은 **컴파일 시점** 제약이다. 저장된 데이터의 실제 수정 차단(완료 세트 수정 거부, 운동별 리셋만 허용, 완료·중도 종료 세션 리셋 거부)은 STEP 09에서 서비스 계층(repositories)·Dexie 테이블 훅·트랜잭션으로 구현했고 fake-indexeddb 테스트로 검증했다(DATAMODEL 5장).
 
 ---
 
@@ -700,12 +745,12 @@ MVP는 회원가입 없이 브라우저에 데이터를 저장한다.
 | `evaluateFST7Progress()` | FST-7 다음 중량 판단 (**구현**, 유지 사유 구분) |
 | `evaluateT1Progress()` | T1 AMRAP 기반 진행 판단 |
 | `replaceExercise()` | 종목 변경과 중량 재계산 |
-| `saveWorkoutSession()` | 세션 기록 저장 |
-| `validateSetCompletion()` | 체크 시 실제 중량·반복 입력값 검증 (순수 함수) |
-| `completeSet()` | 세트 완료 저장: 검증 통과 세트를 트랜잭션 안에서 미완료 재확인 후 완료·잠금 |
-| `getCurrentSetNumber()` | 완료되지 않은 첫 세트 계산 (순수 함수) |
-| `resetSessionExercise()` | 운동 하나(sessionExerciseId)의 전체 세트 리셋 (하루 세션 상태 검증 후 원자적 처리). v1.2의 `resetWorkoutSession()`을 대체 |
-| `restoreWorkoutSession()` | 진행 기록 복원 |
+| `saveWorkoutSession()` | 세션 기록 저장 (STEP 09에서 `startWorkoutSession()`·`completeWorkoutSession()`으로 나눠 **구현**) |
+| `validateSetCompletion()` | 체크 시 실제 중량·반복 입력값 검증 (순수 함수). 미구현 — 현재는 `completeSet()`이 같은 규칙을 직접 검증 |
+| `completeSet()` | 세트 완료 저장: 검증 통과 세트를 트랜잭션 안에서 미완료 재확인 후 완료·잠금 (**구현**, `src/storage/repositories/workoutRepository.ts`) |
+| `getCurrentSetNumber()` | 완료되지 않은 첫 세트 계산 (순수 함수). 저장 계층 조회 결과의 `nextSetNumber`로 제공 |
+| `resetSessionExercise()` | 운동 하나(sessionExerciseId)의 전체 세트 리셋 (하루 세션 상태 검증 후 원자적 처리). v1.2의 `resetWorkoutSession()`을 대체 (**구현**) |
+| `restoreWorkoutSession()` | 진행 기록 복원 (`getActiveSession()`·`getSessionDetail()`로 **구현**) |
 
 ### 12.2 계산 엔진 원칙
 
