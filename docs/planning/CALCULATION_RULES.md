@@ -1,11 +1,17 @@
 # nSuns Hybrid — CALCULATION_RULES.md
 
 > **프로젝트:** nSuns Hybrid 5-Day
-> **문서 버전:** v0.8
+> **문서 버전:** v0.9
 > **문서 상태:** Draft — 설계 결정 반영 완료 / U-03·U-12·기록 잠금 및 운동별 리셋(H-14)·Setup 추정 제안(H-15, 4개 비율 승인) 확정 / 계산 상수(템플릿 비율·AMRAP 증량값) 검증 대기
 > **작성일:** 2026-10-20
 > **상위 문서:** `PTS.md`, `PRD.md`, `FUNCTIONS.md`, `TECHSTACK.md`
 > **이전 버전:** `CALCULATION_RULES.v0.1.bak.md` (v0.1 백업)
+
+### v0.8 → v0.9 변경 요약 (STEP 08-B — 계산 함수 TDD)
+
+- 확정 규칙만 순수 함수로 구현: `validateWeightInput`, `calculateTM`, `roundToIncrement`, `estimateInitialOneRM`, `resolveInitialOneRepMaxes`, `evaluateFST7Progress` (10.13절)
+- 모든 중량 계산은 단위(kg/lb)를 함께 받고, 단위가 다르면 `UNIT_MISMATCH` (U-20 신설: lb 지원 범위)
+- T1 AMRAP 증량(U-04)·T2 증량(U-08)·T1/T2 세트 계산(U-01·U-02·U-08)·스모(U-18)는 미구현 유지
 
 ### v0.7 → v0.8 변경 요약 (STEP 07 마무리 — 추천 비율 승인)
 
@@ -207,7 +213,7 @@ FUNCTIONS.md v1.0의 11.2절은 `training_max`를 "1RM으로 재계산 가능한
 
 최초 설정에서 사용자는 4대 운동(벤치프레스, 컨벤셔널 데드리프트, 백 스쿼트, OHP)의 1RM만 직접 입력한다. 나머지 T1/T2 운동은 아래 규칙으로 **초기 1RM 추천값**을 보여준다.
 
-> 이 비율은 "처음 입력할 1RM을 제안"하는 용도다. T1/T2 세트별 강도 비율(원본 nSuns 템플릿, 5·7장)과는 무관하며, 운동 간 검증된 환산 공식도 아니다. 화면에서 실제 측정 1RM으로 표시하지 않는다.
+> 이 비율은 "처음 입력할 1RM을 제안"하는 용도다. T1/T2 세트별 강도 비율(원본 nSuns 템플릿, 5·7장)과는 무관하며, 운동 간 검증된 환산 공식도 아니다. 화면에서 실제 측정 1RM으로 표시하지 않는다. 직접 입력 1RM(`DIRECT`)도 사용자가 입력한 값일 뿐 측정 검증을 뜻하지 않는다.
 
 | 운동 | 기준 | 비율 | 상태 |
 |---|---|---|---|
@@ -838,8 +844,27 @@ T3 증량 판정의 "7세트 모두 완료"(8.3절)는 이 절의 `completed = t
 | CR-SU-09 | T3 작업 중량 5개 입력 | 운동별 독립 저장, 1RM·TM 미적용 |
 | CR-SU-10 | 설정 확정 | 자동 추정 값이 확정값으로 고정 |
 | CR-SU-11 | 데드리프트 140 / 벤치 100 | 로우 77 / 인클라인 85 (승인 비율) |
-| CR-SU-13 | 추정값 확정·수정 | 출처가 직접 입력(측정 1RM)으로 바뀌지 않음 |
+| CR-SU-13 | 추정값 확정·수정 | 출처가 `DIRECT`(직접 입력)로 바뀌지 않음 |
 | CR-SU-12 | 스모 데드리프트 계산 | `it.todo` (U-18) |
+
+### 10.13 구현 현황 (v0.9, Vitest)
+
+| 함수 | 파일 | 테스트 | 대응 명세 |
+|---|---|---|---|
+| `validateWeightInput` | `src/domain/calculations/weight.ts` | `tests/unit/calculations/weight.test.ts` | CR-TM-03~06, CR-SU-02 |
+| `roundToIncrement` | 같은 파일 | 같은 파일 | CR-RD-01~13 (CR-RD-11은 `NON_POSITIVE_RESULT`) |
+| `calculateTM` | `trainingMax.ts` | `training-max.test.ts` | CR-TM-01~06 |
+| `estimateInitialOneRM`, `resolveInitialOneRepMaxes` | `initialOneRepMax.ts` | `initial-one-rep-max.test.ts`, `setup-consistency.test.ts` | CR-SU-01, 03~08, 11, 13 |
+| `evaluateFST7Progress` | `fst7Progress.ts` | `fst7-progress.test.ts` | CR-F7-04~12 |
+
+함수 계약:
+
+- 오류는 예외 대신 `{ ok: false, error }`로 돌려준다.
+- 중량은 `{ value, unit }`으로 다루며 kg↔lb 자동 변환을 하지 않는다. 단위가 다르면 `UNIT_MISMATCH`.
+- FST-7 유지 사유: `SET_COUNT_MISMATCH`, `SET_INCOMPLETE`, `ACTUAL_WEIGHT_MISSING`, `ACTUAL_REPS_MISSING`, `REPS_BELOW_TARGET`, `WEIGHT_BELOW_TARGET`.
+- 판정 시점(하루 세션 완료)과 증량 중복 방지는 저장 계층이 맡는다.
+
+미구현 (미확정 정책): `calculateT1Sets`, `calculateT2Sets`, `evaluateT1Progress`(U-04), T2 증량(U-08), 스모 데드리프트(U-18).
 
 > 저장·복원(IndexedDB) 테스트는 계산 엔진 범위가 아니므로 TECHSTACK 6장의 통합 테스트에서 다룬다.
 
@@ -869,6 +894,7 @@ T3 증량 판정의 "7세트 모두 완료"(8.3절)는 이 절의 `completed = t
 | U-16 | 바벨 로우 초기 추정 비율 (데드리프트 × 0.55) | **확정 (v0.8)**: MVP 초기 추천값 → 3.6절 | — |
 | U-17 | 인클라인 벤치 초기 추정 비율 (벤치 × 0.85) | **확정 (v0.8)**: MVP 초기 추천값 → 3.6절 | — |
 | U-18 | 스모 데드리프트 기준 TM | 원본 Sumo T2 템플릿 사용은 결정됨. 비율이 참조하는 TM을 원본 시트 **수식**으로 확인하고, H-07(T2 독립 TM)과의 관계 결정 (3.6절) | 스모 T2 계산 (값 없음) |
+| U-20 | lb 단위 지원 범위 | lb 입력 허용 여부, kg↔lb 변환 제공 여부, lb 기본 증가 단위 | 단위 설정 (현재 타입은 lb를 표현하지만 변환 없음) |
 | U-19 | 덤벨 운동 중량 표기 | 한 손 / 양손 합계 기준 (FUNCTIONS 7.3) | 덤벨 사이드 레터럴 레이즈 작업 중량 입력 |
 
 **참고 — v0.1에 있던 AMRAP 증량 범위표:** v0.1에는 "이전 조사"를 근거로 한 lb 단위 구간표가 있었으나 출처 대조가 끝나지 않아 이번 문서에서는 규칙 본문에 넣지 않았다. U-04를 결정할 때 원본 자료와 함께 다시 검토한다.

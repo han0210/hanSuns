@@ -1,7 +1,7 @@
 # nSuns Hybrid — FUNCTIONS.md
 
 > **프로젝트:** nSuns Hybrid 5-Day
-> **버전:** v1.6 (2026-10-21, Setup 추천 비율 4개 승인·1RM 출처 구분 보강, `CALCULATION_RULES.md` v0.8 기준)
+> **버전:** v1.8 (2026-10-21, Exercise·ExerciseProfile 분리, camelCase 확정, DIRECT 의미 명시 / v1.7 데이터 모델 타입·계산 함수 구현, `CALCULATION_RULES.md` v0.9 기준)
 > **상태:** 기능 명세 초안 / 계산 템플릿 검증 대기
 > **기준 문서:** `docs/planning/PTS.md`, `docs/planning/PRD.md`
 > **목표:** 무료 모바일 웹 기반 운동 프로그램 관리 서비스
@@ -141,18 +141,19 @@ currentTM이 바뀔 때마다 변경 전·후 값, 사유(INITIAL / AMRAP_PROGRE
 
 규칙:
 
-- 추천값은 확정 전까지 계산에 쓰지 않는다. 확정하면 해당 운동의 `one_rm`이 된다.
+- 추천값은 확정 전까지 계산에 쓰지 않는다. 확정하면 해당 운동의 `oneRepMax`이 된다.
 - 사용자가 확정하거나 수정한 값은 기준 운동 1RM이 바뀌어도 자동으로 바꾸지 않는다.
-- 직접 입력한 측정 1RM과 추정 기반 1RM(자동 추정·추정값 확정·사용자 수정)의 출처를 구분한다. 확정하거나 수정해도 측정 1RM으로 바꾸지 않는다.
+- 직접 입력 1RM(`DIRECT`)과 추정 기반 1RM(자동 추정·추정값 확정·사용자 수정)의 출처를 구분한다. 확정하거나 수정해도 `DIRECT`로 바꾸지 않는다.
+- `DIRECT`는 사용자가 1RM을 직접 입력했다는 뜻이며, 실제 측정이 검증되었다는 뜻이 아니다.
 - 추천 비율은 nSuns Hybrid MVP 초기 추천값이며 원본 nSuns 공식 환산 비율로 표시하지 않는다.
 - 입력값은 0보다 큰 숫자만 허용하며, 유효하지 않으면 다음 단계로 진행할 수 없다.
 
-**데이터 모델 제안 (구현 전 승인 필요):** 1RM 출처를 구분하기 위해 ExerciseProfile(11.2)에 다음 두 필드를 추가하는 안을 제안한다. 추천값 자체는 기준 1RM과 비율로 다시 계산할 수 있으므로 저장하지 않는다.
+**데이터 모델 (v1.7 반영, `docs/architecture/DATAMODEL.md`):** 1RM 출처를 구분하기 위해 ExerciseProfile에 다음 두 필드를 둔다. 추천값 자체는 기준 1RM과 비율로 다시 계산할 수 있으므로 저장하지 않는다. TypeScript 필드 이름은 camelCase(`oneRepMaxSource`, `estimateRuleId`)다.
 
 | 필드 | 값 | 목적 |
 |---|---|---|
-| `one_rm_source` | `DIRECT` / `ESTIMATE_ACCEPTED` / `USER_EDITED` | 직접 입력(측정)·추천값 확정·사용자 수정 구분. `USER_EDITED`도 측정 1RM으로 취급하지 않음 |
-| `estimate_rule_id` | 규칙 ID 또는 null | 추천값을 만든 규칙 추적 (Mock 규칙 여부 판단) |
+| `oneRepMaxSource` | `DIRECT` / `ESTIMATE_ACCEPTED` / `USER_EDITED` | 직접 입력·추천값 확정·사용자 수정 구분. `DIRECT`는 측정 검증을 뜻하지 않으며, 추정 기반 값은 확정·수정 후에도 `DIRECT`가 되지 않음 |
+| `estimateRuleId` | 규칙 ID 또는 null | 추천값을 만든 규칙 추적 (Mock 규칙 여부 판단) |
 
 ---
 
@@ -174,12 +175,12 @@ T1은 사용자의 TM과 선택된 nSuns 세트 템플릿을 활용한다.
 
 | 필드 | 설명 |
 |---|---|
-| template_id | 템플릿 식별자 |
-| set_number | 세트 순서 |
-| target_reps | 목표 반복 횟수 |
-| intensity_percent | TM 대비 강도 |
-| is_amrap | AMRAP 여부 |
-| rest_seconds | 기본 휴식 시간 |
+| templateId | 템플릿 식별자 |
+| setNumber | 세트 순서 |
+| targetReps | 목표 반복 횟수 |
+| intensityRatio | TM 대비 강도 |
+| isAmrap | AMRAP 여부 |
+| restSeconds | 기본 휴식 시간 |
 
 nSuns 원본 세트별 횟수와 비율은 실제 원본 스프레드시트와 대조한 뒤 고정 데이터로 등록한다.
 
@@ -410,17 +411,17 @@ T3는 1RM 대신 작업 중량을 입력한다.
 
 | 필드 | 설명 |
 |---|---|
-| session_exercise_id | 소속 운동 실행 단위 ID (SessionExercise) |
-| session_id | 운동 세션 ID (조회 편의용, SessionExercise와 일치해야 함) |
-| exercise_id | 운동 ID |
+| sessionExerciseId | 소속 운동 실행 단위 ID (SessionExercise) |
+| sessionId | 운동 세션 ID (조회 편의용, SessionExercise와 일치해야 함) |
+| exerciseId | 운동 ID |
 | tier | T1, T2, T3 |
-| set_number | 세트 번호 |
-| target_weight | 목표 중량 |
-| actual_weight | 실제 중량 |
-| target_reps | 목표 반복 |
-| actual_reps | 실제 반복 |
+| setNumber | 세트 번호 |
+| targetWeight | 목표 중량 |
+| actualWeight | 실제 중량 |
+| targetReps | 목표 반복 |
+| actualReps | 실제 반복 |
 | completed | 완료 여부 |
-| completed_at | 완료 시각 |
+| completedAt | 완료 시각 |
 
 ### 9.2 기록 규칙
 
@@ -438,18 +439,18 @@ T3는 1RM 대신 작업 중량을 입력한다.
 
 | 단계 | 처리 |
 |---|---|
-| 1. 입력 | 체크 전에는 `actual_weight`, `actual_reps`를 자유롭게 수정 |
+| 1. 입력 | 체크 전에는 `actualWeight`, `actualReps`를 자유롭게 수정 |
 | 2. 체크 | 사용자가 세트 완료 후 체크박스를 직접 체크 |
-| 3. 검증 | `actual_weight`: 0보다 큰 유한한 숫자 / `actual_reps`: 0 이상의 정수 / 누락 시 체크 거부 |
+| 3. 검증 | `actualWeight`: 0보다 큰 유한한 숫자 / `actualReps`: 0 이상의 정수 / 누락 시 체크 거부 |
 | 4. 저장 중 | 체크박스는 "저장 중" 상태로 표시, 해당 세트의 입력·체크 중복 조작 차단 |
-| 5. 저장 성공 | `completed = true`, `completed_at` 기록 → 세트 잠금 → 체크 표시 확정 |
+| 5. 저장 성공 | `completed = true`, `completedAt` 기록 → 세트 잠금 → 체크 표시 확정 |
 | 6. 후속 처리 | 같은 운동에 완료되지 않은 세트가 남아 있으면 휴식 타이머 자동 시작, 현재 세트 표시 갱신 |
 | 저장 실패 | 체크되지 않은 상태로 되돌림, 입력값 보존, 오류 안내, 재시도 가능, 타이머 시작하지 않음 |
 
 - **완료의 기준은 저장 성공이다.** 화면에서 먼저 완료로 표시한 뒤 저장하는 방식(낙관적 갱신)은 사용하지 않는다.
 - 완료된 체크박스는 개별 해제할 수 없다. 기록을 고치려면 해당 운동의 전체 세트를 리셋한다(9.4절).
 - 체크는 하루 세션이 IN_PROGRESS일 때 가능하다.
-- **현재 세트**는 저장하지 않고 `completed = false`인 첫 세트(가장 작은 `set_number`)로 계산한다. 모든 세트가 완료되면 현재 세트는 없다.
+- **현재 세트**는 저장하지 않고 `completed = false`인 첫 세트(가장 작은 `setNumber`)로 계산한다. 모든 세트가 완료되면 현재 세트는 없다.
 - 미완료 세트의 입력 중인 값(체크 전 초안)의 저장 여부는 기존 FUNCTIONS 10.3 "운동 중 기록이 변경되면 저장한다"를 따르되, 초안 저장은 `completed`를 바꾸지 않는다.
 
 ### 9.3 세션 상태
@@ -473,15 +474,15 @@ T3는 1RM 대신 작업 중량을 입력한다.
 | 항목 | 규칙 |
 |---|---|
 | 리셋 단위 | 하루 세션 안의 운동 하나(SessionExercise)의 전체 세트. 세트 단위 부분 리셋은 제공하지 않는다 |
-| 대상 식별 | `session_exercise_id`로만 식별한다. `exercise_id`는 여러 세션에 존재하므로 식별자로 쓰지 않는다 |
+| 대상 식별 | `sessionExerciseId`로만 식별한다. `exerciseId`는 여러 세션에 존재하므로 식별자로 쓰지 않는다 |
 | 허용 조건 | 하루 세션(WorkoutSession) 상태가 IN_PROGRESS 또는 PAUSED |
 | 불허 조건 | COMPLETED — U-14 확정 전 불허 / ABANDONED — U-15 확정 전 불허 (CALCULATION_RULES) |
 | 사용자 확인 | 확인 모달에서 명시적으로 승인한 경우에만 실행 |
-| 초기화 대상 | 대상 운동의 모든 세트의 체크 상태(`completed`), `completed_at`, `actual_weight`, `actual_reps` |
+| 초기화 대상 | 대상 운동의 모든 세트의 체크 상태(`completed`), `completedAt`, `actualWeight`, `actualReps` |
 | 진행 상태 | 모든 세트가 미완료가 되므로 현재 세트는 첫 세트로 계산된다. 운동 상태를 저장하는 경우 NOT_STARTED로 재설정 |
-| 리셋 이력 | 대상 운동의 `reset_count` 1 증가, `last_reset_at` 갱신 |
-| 보존 대상 | `target_weight`, `target_reps`, `set_number`, 운동의 템플릿 ID·버전, 세션 시작 시점 TM(또는 T3 작업 중량)·증가 단위 스냅샷 |
-| 변경 금지 | 같은 세션의 다른 운동 기록, 하루 세션 상태, 운동 프로필(`current_tm` 등), TM 변경 이력, T3 다음 목표 작업 중량 |
+| 리셋 이력 | 대상 운동의 `resetCount` 1 증가, `lastResetAt` 갱신 |
+| 보존 대상 | `targetWeight`, `targetReps`, `setNumber`, 운동의 템플릿 ID·버전, 세션 시작 시점 TM(또는 T3 작업 중량)·증가 단위 스냅샷 |
+| 변경 금지 | 같은 세션의 다른 운동 기록, 하루 세션 상태, 운동 프로필(`currentTM` 등), TM 변경 이력, T3 다음 목표 작업 중량 |
 | TM·작업 중량 | 리셋으로 새로운 TM이나 작업 중량을 생성하지 않는다 |
 | 증량 | 자동 증량은 하루 세션 완료 시 판정하므로, 리셋 가능한 세션에는 확정된 증량이 없다. 리셋은 증량 이벤트를 만들지 않는다 |
 | 휴식 타이머 | 대상 운동의 타이머가 실행 중이면 중지 |
@@ -494,7 +495,7 @@ T3는 1RM 대신 작업 중량을 입력한다.
 1. 사용자가 진행 중인 운동(T1/T2/T3 중 하나)에서 리셋을 선택한다.
 2. 확인 모달에 대상 운동과 초기화될 세트 수를 표시한다.
 3. 취소하면 아무것도 변경하지 않는다.
-4. 승인하면 `resetSessionExercise(session_exercise_id)`를 호출한다.
+4. 승인하면 `resetSessionExercise(sessionExerciseId)`를 호출한다.
 5. 저장 계층이 트랜잭션 안에서 하루 세션 상태를 다시 확인한다.
 6. 대상 운동의 세트 실제값·완료 상태, 진행 위치, 리셋 이력을 갱신한다.
 7. 화면은 대상 운동의 첫 세트 입력 상태로 돌아간다.
@@ -541,55 +542,69 @@ MVP는 회원가입 없이 브라우저에 데이터를 저장한다.
 
 ---
 
-## 11. 데이터 모델 초안
+## 11. 데이터 모델
 
-### 11.1 Exercise
+> **v1.8:** 확정 타입은 `docs/architecture/DATAMODEL.md`와 `src/domain/types/model.ts`를 따른다. TypeScript와 저장 모델(Dexie) 모두 필드 이름은 **camelCase**로 확정한다. 아래 JSON은 확정 타입에 맞춘 예시다.
+
+### 11.1 Exercise (운동 마스터)
+
+운동 이름·장비·중량 단위·증가 단위처럼 사용자 기록과 무관한 정보다.
 
 ```json
 {
-  "id": "bench_press",
+  "exerciseId": "bench_press",
   "name": "벤치프레스",
-  "equipment": "barbell",
-  "weight_unit": "kg",
-  "weight_increment": 2.5,
-  "weight_display_mode": "total"
+  "equipment": "BARBELL",
+  "weightUnit": "kg",
+  "increment": 2.5,
+  "updatedAt": "2026-10-20T00:00:00.000Z"
 }
 ```
 
-### 11.2 ExerciseProfile
+덤벨 표기 기준(한 손 / 양손 합계, 구 `weight_display_mode`)은 미확정(U-19)이라 필드를 두지 않는다.
+
+### 11.2 ExerciseProfile (사용자 기준 중량)
 
 ```json
 {
-  "exercise_id": "bench_press",
-  "one_rm": 100,
-  "initial_tm": 90,
-  "current_tm": 90,
-  "fst7_working_weight": null,
-  "updated_at": "2026-10-20T00:00:00Z"
+  "exerciseId": "bench_press",
+  "weightUnit": "kg",
+  "oneRepMax": 100,
+  "oneRepMaxSource": "DIRECT",
+  "estimateRuleId": null,
+  "initialTM": 90,
+  "currentTM": 90,
+  "t3WorkingWeight": null,
+  "updatedAt": "2026-10-20T00:00:00.000Z"
 }
 ```
 
-`initial_tm`은 `one_rm × 0.9`로 재계산 가능한 파생값이다. `current_tm`은 AMRAP 증량 이후 1RM에서 재계산할 수 없으므로 독립 저장값으로 관리한다.
+- `initialTM`은 `oneRepMax × 0.9`로 재계산 가능한 파생값이다. `currentTM`은 AMRAP 증량 이후 1RM에서 재계산할 수 없으므로 독립 저장값으로 관리한다.
+- 프로필은 exerciseId당 하나이며, T1과 T2에서 같은 운동을 쓰면 같은 프로필을 참조한다.
+- `weightUnit`은 프로필 값들의 단위이며 Exercise의 `weightUnit`과 같아야 한다.
+- `oneRepMaxSource: "DIRECT"`는 사용자가 1RM을 **직접 입력**했다는 뜻이며, 실제 측정이 검증되었다는 뜻이 아니다.
 
-프로필은 exerciseId당 하나이며, T1과 T2에서 같은 운동을 쓰면 같은 프로필을 참조한다.
-
-### 11.3 WorkoutSet (SetRecord)
+### 11.3 SetRecord
 
 각 세트는 하나의 SessionExercise에 소속된다.
 
 ```json
 {
-  "session_exercise_id": "session_001_t1_bench_press",
-  "session_id": "session_001",
-  "exercise_id": "bench_press",
+  "setRecordId": "session_001_t1_bench_press#1",
+  "sessionExerciseId": "session_001_t1_bench_press",
+  "sessionId": "session_001",
+  "exerciseId": "bench_press",
   "tier": "T1",
-  "set_number": 1,
-  "target_weight": 67.5,
-  "actual_weight": 67.5,
-  "target_reps": 5,
-  "actual_reps": 5,
+  "setNumber": 1,
+  "weightUnit": "kg",
+  "targetWeight": 67.5,
+  "targetReps": 5,
+  "isAmrap": false,
+  "manualTargetWeight": null,
   "completed": true,
-  "completed_at": "2026-10-20T09:10:00Z"
+  "actualWeight": 67.5,
+  "actualReps": 5,
+  "completedAt": "2026-10-20T09:10:00.000Z"
 }
 ```
 
@@ -599,13 +614,13 @@ MVP는 회원가입 없이 브라우저에 데이터를 저장한다.
 
 ```json
 {
-  "id": "session_001",
-  "scheduled_day": "MONDAY",
-  "workout_date": "2026-10-20",
+  "sessionId": "session_001",
+  "scheduledDay": "MONDAY",
+  "workoutDate": "2026-10-20",
   "status": "IN_PROGRESS",
-  "started_at": "2026-10-20T09:00:00Z",
-  "completed_at": null,
-  "schema_version": 1
+  "startedAt": "2026-10-20T09:00:00.000Z",
+  "completedAt": null,
+  "schemaVersion": 1
 }
 ```
 
@@ -615,50 +630,57 @@ MVP는 회원가입 없이 브라우저에 데이터를 저장한다.
 
 ### 11.4.1 SessionExercise
 
-하루 세션에 포함된 운동 하나의 실행 단위다. 운동 마스터 데이터인 Exercise·ExerciseProfile과 다른 개념이다.
+하루 세션에 포함된 운동 하나의 실행 단위다. 운동 마스터(Exercise)·사용자 기준 중량(ExerciseProfile)과 다른 개념이다.
 
 ```json
 {
-  "id": "session_001_t2_ohp",
-  "session_id": "session_001",
-  "exercise_id": "ohp",
+  "sessionExerciseId": "session_001_t2_ohp",
+  "sessionId": "session_001",
+  "exerciseId": "ohp",
   "tier": "T2",
-  "status": "IN_PROGRESS",
-  "template_id": null,
-  "template_version": null,
-  "tm_at_session": 50,
-  "working_weight_at_session": null,
+  "weightUnit": "kg",
   "increment": 2.5,
-  "reset_count": 0,
-  "last_reset_at": null
+  "templateId": null,
+  "templateVersion": null,
+  "tmAtSession": 50,
+  "workingWeightAtSession": null,
+  "restSeconds": 120,
+  "resetCount": 0,
+  "lastResetAt": null
 }
 ```
 
-- `id`(session_exercise_id)는 전역에서 유일하다. 같은 `exercise_id`가 여러 세션에 존재할 수 있다.
-- 한 세션 안에서 `(session_id, exercise_id, tier)` 조합은 하나만 존재한다. 이 조합은 기존 증량 멱등성 키와 1:1로 대응한다.
-- `tm_at_session`은 T1·T2, `working_weight_at_session`은 T3에서 사용한다.
-- 현재 세트 위치(`current_set_index`)는 저장하지 않는다. 소속 세트 중 완료되지 않은 첫 세트로 계산한다. 저장값과 실제 세트 상태가 어긋나는 문제를 막기 위함이다.
+- `sessionExerciseId`는 전역에서 유일하다. 같은 `exerciseId`가 여러 세션에 존재할 수 있다.
+- 한 세션 안에서 `(sessionId, exerciseId, tier)` 조합은 하나만 존재한다. 이 조합은 기존 증량 멱등성 키와 1:1로 대응한다.
+- `tmAtSession`은 T1·T2, `workingWeightAtSession`은 T3에서 사용한다.
+- 현재 세트 위치(`currentSetIndex`)와 운동 진행 상태는 저장하지 않는다. 소속 세트의 완료 여부로 계산한다. 저장값과 실제 세트 상태가 어긋나는 문제를 막기 위함이다.
 - 위 수치와 null 템플릿 값은 구조 설명용이며 검증된 템플릿·TM 값이 아니다.
 
 ### 11.5 TMChange
 
 ```json
 {
-  "exercise_id": "ohp",
-  "from_tm": 50,
-  "to_tm": "<from_tm + 승인된 증량값>",
+  "tmChangeId": "tm_change_001",
+  "exerciseId": "ohp",
+  "weightUnit": "kg",
+  "fromTM": 50,
+  "toTM": "<fromTM + 승인된 증량값>",
   "reason": "AMRAP_PROGRESSION",
-  "source_session_id": "session_005",
-  "source_tier": "T1",
-  "rule_id": "amrap-progression",
-  "rule_version": 1,
-  "applied_at": "2026-10-24T10:00:00Z"
+  "sourceSessionId": "session_005",
+  "sourceTier": "T1",
+  "ruleId": "amrap-progression",
+  "ruleVersion": 1,
+  "appliedAt": "2026-10-24T10:00:00.000Z"
 }
 ```
 
-`(source_session_id, exercise_id, source_tier)` 조합으로 같은 세션의 증량이 중복 적용되지 않도록 한다.
+`(sourceSessionId, exerciseId, sourceTier)` 조합으로 같은 세션의 증량이 중복 적용되지 않도록 한다.
 
 위 수치는 구조 설명용 예시이며 확정된 AMRAP 증량값이 아니다.
+
+### 11.6 수정 차단의 책임
+
+타입의 `readonly`와 완료 세트 타입 구분은 **컴파일 시점** 제약이다. 저장된 데이터의 실제 수정 차단(완료 세트 수정 거부, 운동별 리셋만 허용, 완료·중도 종료 세션 리셋 거부)은 STEP 09의 서비스 계층과 Dexie 트랜잭션에서 구현하고 테스트로 검증한다.
 
 ---
 
@@ -668,19 +690,21 @@ MVP는 회원가입 없이 브라우저에 데이터를 저장한다.
 
 | 함수 | 역할 |
 |---|---|
-| `calculateTM()` | 1RM → TM 계산 |
-| `roundToIncrement()` | 장비 단위 반올림 |
+| `calculateTM()` | 1RM → TM 계산 (**구현**, `src/domain/calculations/trainingMax.ts`) |
+| `validateWeightInput()` | 중량 입력 검증 (**구현**) |
+| `estimateInitialOneRM()` / `resolveInitialOneRepMaxes()` | 초기 1RM 추천값·출처 결정 (**구현**) |
+| `roundToIncrement()` | 장비 단위 반올림 (**구현**, 단위 불일치 거부) |
 | `calculateT1Sets()` | T1 목표 세트 생성 |
 | `calculateT2Sets()` | T2 목표 세트 생성 |
 | `generateFST7Sets()` | 12회 × 7세트 생성 |
-| `evaluateFST7Progress()` | FST-7 다음 중량 판단 |
+| `evaluateFST7Progress()` | FST-7 다음 중량 판단 (**구현**, 유지 사유 구분) |
 | `evaluateT1Progress()` | T1 AMRAP 기반 진행 판단 |
 | `replaceExercise()` | 종목 변경과 중량 재계산 |
 | `saveWorkoutSession()` | 세션 기록 저장 |
 | `validateSetCompletion()` | 체크 시 실제 중량·반복 입력값 검증 (순수 함수) |
 | `completeSet()` | 세트 완료 저장: 검증 통과 세트를 트랜잭션 안에서 미완료 재확인 후 완료·잠금 |
 | `getCurrentSetNumber()` | 완료되지 않은 첫 세트 계산 (순수 함수) |
-| `resetSessionExercise()` | 운동 하나(session_exercise_id)의 전체 세트 리셋 (하루 세션 상태 검증 후 원자적 처리). v1.2의 `resetWorkoutSession()`을 대체 |
+| `resetSessionExercise()` | 운동 하나(sessionExerciseId)의 전체 세트 리셋 (하루 세션 상태 검증 후 원자적 처리). v1.2의 `resetWorkoutSession()`을 대체 |
 | `restoreWorkoutSession()` | 진행 기록 복원 |
 
 ### 12.2 계산 엔진 원칙

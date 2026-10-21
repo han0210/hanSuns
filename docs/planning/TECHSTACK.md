@@ -1,6 +1,6 @@
 # nSuns Hybrid — TECHSTACK.md
 
-> **버전:** v1.5 (2026-10-21, Mobile First 검증 환경·오프라인 범위 반영)  
+> **버전:** v1.6 (2026-10-21, Vitest 도입·도메인 폴더 반영)  
 > **상태:** 기술 스택 권장안 / 개발 전 계산 템플릿 검증 필요  
 > **상위 문서:** `docs/planning/PTS.md`, `docs/planning/PRD.md`, `docs/planning/FUNCTIONS.md`  
 > **권장 저장 경로:** `docs/planning/TECHSTACK.md`  
@@ -240,6 +240,12 @@ Dexie를 이용해 IndexedDB에 다음 데이터를 보관한다.
 | 통합 | Vitest + IndexedDB 테스트 환경 | 저장·복원·마이그레이션, 과거 기록 불변성, 세트 완료 저장 실패 시 미완료 유지, 중복 체크 거부, 완료 세트 잠금, 운동 리셋 원자성·롤백, 다른 운동 기록 불변, 완료·중도 종료 세션의 운동 리셋 거부 |
 | E2E | Playwright | 320 / 390 / 430 / 768 / 1024px에서 초기 설정 → 운동 변경 → 7세트 완료 → 새로고침 복원. Chromium 외 WebKit 엔진 포함 검토 |
 | 실기기 수동 QA | iPhone Safari, Android Chrome | 숫자 키패드, 입력 자동 확대, Safe Area, 백그라운드 타이머, IndexedDB 저장·복원 (FRONTEND.md 10.1) |
+
+**Vitest 도입 (v1.6):** `vitest@4.1.11` (devDependency, 버전 고정). 명령은 `npm test` (`vitest run`), 설정은 `vitest.config.ts`(node 환경, `@/` 별칭), 테스트는 `tests/unit/**/*.test.ts`.
+
+- 5.x가 아닌 4.1.x를 고른 이유: 5.x는 `@types/node` ^22 이상을 요구해 기존 `@types/node` ^20을 바꿔야 한다.
+- npm 10.9 환경에서 `npm install vitest`가 내부 오류(`edgesOut`)로 실패해, 잠금 파일은 npm 11로 생성했다. 기존 패키지 버전은 바뀌지 않았고, 생성된 잠금 파일은 npm 10의 `npm ci`로 설치됨을 확인했다.
+- 도메인 코드: `src/domain/types/`(데이터 모델·단위), `src/domain/calculations/`(순수 계산). 화면·저장소에 의존하지 않는다.
 
 **필수 테스트 원칙**
 
