@@ -8,6 +8,7 @@
  * 중량 계산식(TM × 비율)이나 증량 규칙은 포함하지 않는다.
  */
 
+import { parsePositiveKg } from "@/lib/weightInput";
 import type {
   SessionExercise,
   SessionStatus,
@@ -55,13 +56,8 @@ export function validateSetCompletion(
   return { ok: true, weight, reps };
 }
 
-/** 목표 중량 수정값 검증 (0보다 큰 숫자) */
-export function parseTargetWeight(text: string): number | null {
-  const trimmed = text.trim();
-  if (!DECIMAL_PATTERN.test(trimmed)) return null;
-  const value = Number(trimmed);
-  return Number.isFinite(value) && value > 0 ? value : null;
-}
+/** 목표 중량 수정값 검증 (0보다 큰 숫자). 공통 규칙은 src/lib/weightInput.ts */
+export const parseTargetWeight = parsePositiveKg;
 
 // ---------------------------------------------------------------------------
 // 진행 상태 계산 (현재 세트는 저장하지 않고 계산한다 — FUNCTIONS 9.2.1)

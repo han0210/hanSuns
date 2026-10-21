@@ -1,7 +1,7 @@
 # nSuns Hybrid — FRONTEND.md
 
 > **프로젝트:** nSuns Hybrid 5-Day
-> **버전:** v0.1
+> **버전:** v0.2 (2026-10-21, Setup 화면 명세 연결)
 > **상태:** Frontend 설계 초안
 > **경로:** `docs/design/FRONTEND.md`
 > **디자인 기준:** `docs/design/BASE.md`
@@ -58,7 +58,7 @@ MVP 주요 화면:
 | 화면 | 경로 | 역할 |
 |---|---|---|
 | Dashboard | `/` | 주간 프로그램 및 오늘의 운동 |
-| Setup | `/setup` | 최초 기준 중량 입력 |
+| Setup | `/setup` | 최초 기준 중량 입력 (상세: `screens/SETUP.md`, 프로토타입 `/prototype/setup`) |
 | Routine | `/routine` | T2/T3 종목 변경 |
 | Workout | `/workout/[day]` | 세트 수행 및 기록 |
 | History | `/history` | 완료 세션 기록 조회 |
@@ -93,13 +93,16 @@ MVP 주요 화면:
 
 주요 콘텐츠:
 
-- T1/T2 운동별 1RM 입력
+- 4대 운동(벤치프레스, 컨벤셔널 데드리프트, 백 스쿼트, OHP) 1RM 직접 입력
+- 나머지 T1/T2 운동의 초기 1RM 추천값 검토·확정·수정 (CALCULATION_RULES 3.6)
 - T3 작업 중량 입력
-- 운동별 중량 증가 단위
+- 운동별 중량 증가 단위 (Setup 프로토타입 범위 밖, 후속 결정)
 - 최초 TM 계산 결과
 - 입력값 검증 및 저장 상태
 
 동일한 `exerciseId`를 사용하는 운동은 하나의 프로필을 공유한다.
+
+추천값은 실제 측정 1RM이 아니며, 직접 입력(측정)·자동 추정·추정값 확정·사용자 수정 상태를 화면에서 구분한다. 상세는 `screens/SETUP.md`를 따른다.
 
 ### 4.3 Routine
 
