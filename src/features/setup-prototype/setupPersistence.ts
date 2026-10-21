@@ -22,6 +22,7 @@ import {
   T3_EXERCISES,
   T3_IDS,
   type DirectLiftId,
+  type EstimatedEntry,
   type EstimatedLiftId,
   type SetupState,
   type T3ExerciseId,
@@ -42,6 +43,7 @@ export const SETUP_EQUIPMENT: Record<SetupExerciseId, { equipment: EquipmentType
   barbell_row: { equipment: "BARBELL", increment: 2.5 },
   incline_bench_press: { equipment: "BARBELL", increment: 2.5 },
   barbell_shrug: { equipment: "BARBELL", increment: 2.5 },
+  sumo_deadlift: { equipment: "BARBELL", increment: 2.5 },
   cable_fly: { equipment: "CABLE", increment: 2.5 },
   leg_curl: { equipment: "MACHINE", increment: 2.5 },
   leg_extension: { equipment: "MACHINE", increment: 2.5 },
@@ -93,9 +95,17 @@ export function buildInitialSetupInput(state: SetupState): InitialSetupInput | n
   return { exercises: SETUP_EXERCISE_IDS.map(exerciseInput), profiles };
 }
 
+/**
+ * 설정 저장 이후에 새로 확정되어 추가된 운동. 기존 사용자의 설정에는 없을 수 있으며,
+ * 이 운동만 빠진 설정은 "부분 저장 오류"가 아니라 추가 입력이 필요한 상태(needsUpgrade)로 본다.
+ */
+export const UPGRADABLE_EXERCISE_IDS: readonly EstimatedLiftId[] = ["sumo_deadlift"];
+
 export type RestoredSetup =
   | { readonly kind: "none" }
   | { readonly kind: "complete"; readonly state: SetupState }
+  /** 기존 값은 모두 있고 새로 추가된 운동만 없음. state의 해당 운동은 자동 추정(ESTIMATE) 상태 */
+  | { readonly kind: "needsUpgrade"; readonly state: SetupState; readonly missing: readonly EstimatedLiftId[] }
   /** 일부만 저장된 비정상 상태 (일괄 저장이라 정상 경로로는 생기지 않음) */
   | { readonly kind: "partial"; readonly missing: readonly string[] };
 
@@ -107,17 +117,49 @@ export function restoreSetupState(saved: SavedSetup): RestoredSetup {
   if (saved.profiles.length === 0) return { kind: "none" };
   const byId = new Map<string, ExerciseProfile>(saved.profiles.map((p) => [p.exerciseId, p]));
   const missing = SETUP_EXERCISE_IDS.filter((id) => !byId.has(id));
-  if (missing.length > 0) return { kind: "partial", missing };
+  const upgradable = new Set<string>(UPGRADABLE_EXERCISE_IDS);
+  if (missing.some((id) => !upgradable.has(id))) return { kind: "partial", missing };
 
   const state = createInitialSetupState();
   for (const id of DIRECT_LIFT_IDS) state.direct[id] = toText(byId.get(id)?.oneRepMax ?? 0);
   for (const id of ESTIMATED_LIFT_IDS) {
     const profile = byId.get(id);
-    const text = toText(profile?.oneRepMax ?? 0);
-    state.estimated[id] = profile?.oneRepMaxSource === "USER_EDITED" ? { source: "EDITED", text } : { source: "ACCEPTED", text };
+    if (!profile) continue; // 추가 운동: 자동 추정(ESTIMATE) 상태로 둔다
+    const text = toText(profile.oneRepMax ?? 0);
+    state.estimated[id] = profile.oneRepMaxSource === "USER_EDITED" ? { source: "EDITED", text } : { source: "ACCEPTED", text };
   }
   for (const id of T3_IDS) state.t3[id] = toText(byId.get(id)?.t3WorkingWeight ?? 0);
-  return { kind: "complete", state: { ...state, step: 4, completed: true } };
+  const restored: SetupState = { ...state, step: 4, completed: true };
+  if (missing.length > 0) return { kind: "needsUpgrade", state: restored, missing: missing as EstimatedLiftId[] };
+  return { kind: "complete", state: restored };
+}
+
+/** 저장된 컨벤셔널 데드리프트 1RM으로 계산한 스모 추정값 (H-19: × 0.50). 데드리프트가 없으면 null */
+export function sumoEstimateFromSaved(saved: SavedSetup): number | null {
+  const deadlift = saved.profiles.find((p) => p.exerciseId === ESTIMATE_RULES.sumo_deadlift.baseId)?.oneRepMax ?? null;
+  return deadlift === null ? null : Number((deadlift * ESTIMATE_RULES.sumo_deadlift.ratio).toPrecision(12));
+}
+
+/**
+ * 기존 설정에 스모 데드리프트를 추가하는 저장 입력.
+ * @param entry 사용자가 확정(ACCEPTED: 추정값 그대로)하거나 수정(EDITED)한 값. 자동 추정 상태·잘못된 값이면 null
+ */
+export function buildSumoUpgradeInput(entry: EstimatedEntry): InitialSetupInput | null {
+  if (entry.source === "ESTIMATE") return null;
+  const value = parsePositiveKg(entry.text);
+  if (value === null) return null;
+  return {
+    exercises: [exerciseInput("sumo_deadlift")],
+    profiles: [
+      {
+        exerciseId: "sumo_deadlift",
+        oneRepMax: kg(value),
+        oneRepMaxSource: entry.source === "ACCEPTED" ? "ESTIMATE_ACCEPTED" : "USER_EDITED",
+        estimateRuleId: ESTIMATE_RULES.sumo_deadlift.ruleId,
+        t3WorkingWeight: null,
+      },
+    ],
+  };
 }
 
 export type ConfirmSetupResult =

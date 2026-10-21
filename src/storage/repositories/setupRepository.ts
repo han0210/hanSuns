@@ -27,6 +27,7 @@ export type InitialSetupInput = {
 export type SavedSetup = { readonly exercises: Exercise[]; readonly profiles: ExerciseProfile[] };
 
 export type SaveInitialSetupError = "INVALID_SETUP" | "SETUP_ALREADY_EXISTS" | SaveExerciseError | InitializeProfileError;
+export type AddSetupExercisesError = "INVALID_SETUP" | "SETUP_NOT_FOUND" | SaveExerciseError | InitializeProfileError;
 
 /** 하위 작업이 실패했을 때 바깥 트랜잭션을 중단(롤백)시키기 위한 내부 예외 */
 class SetupAbort extends Error {
@@ -50,6 +51,30 @@ function isConsistent(input: InitialSetupInput): boolean {
 }
 
 /**
+ * 운동 마스터·프로필 목록을 현재 트랜잭션 안에서 차례로 저장한다. 하나라도 실패하면 SetupAbort를 던져
+ * 바깥 트랜잭션 전체를 롤백시킨다. 프로필이 이미 있는 운동은 initializeExerciseProfile이 거부한다(덮어쓰기 없음).
+ */
+async function writeAll(db: NsunsDatabase, input: InitialSetupInput, options?: RepositoryOptions): Promise<SavedSetup> {
+  const exercises: Exercise[] = [];
+  for (const exerciseInput of input.exercises) {
+    const saved = await saveExercise(db, exerciseInput, options);
+    if (!saved.ok) throw new SetupAbort(saved.error, `${exerciseInput.exerciseId}${saved.message ? `: ${saved.message}` : ""}`);
+    exercises.push(saved.value);
+  }
+  const profiles: ExerciseProfile[] = [];
+  for (const profileInput of input.profiles) {
+    const saved = await initializeExerciseProfile(db, profileInput, options);
+    if (!saved.ok) throw new SetupAbort(saved.error, `${profileInput.exerciseId}${saved.message ? `: ${saved.message}` : ""}`);
+    profiles.push(saved.value);
+  }
+  return { exercises, profiles };
+}
+
+/** 하위 작업의 검증 실패는 원래 오류 코드로, IndexedDB 오류는 STORAGE_ERROR로 돌려준다 */
+const mapAbort = <E extends string>(error: unknown): E | null =>
+  error instanceof SetupAbort && error.code !== "STORAGE_ERROR" ? (error.code as E) : null;
+
+/**
  * 최초 설정을 한 번에 저장한다.
  * - 이미 프로필이 하나라도 있으면 SETUP_ALREADY_EXISTS (기존 설정 덮어쓰기 금지, 1RM 수정 정책 U-05 미확정)
  * - 항목 하나라도 실패하면 전체 롤백 (부분 저장 없음)
@@ -66,23 +91,32 @@ export function saveInitialSetup(
     db.transaction("rw", [db.exercises, db.exerciseProfiles, db.tmChanges], async () => {
       if (!isConsistent(input)) return new ValidationStop<E>("INVALID_SETUP");
       if ((await db.exerciseProfiles.count()) > 0) return new ValidationStop<E>("SETUP_ALREADY_EXISTS");
-
-      const exercises: Exercise[] = [];
-      for (const exerciseInput of input.exercises) {
-        const saved = await saveExercise(db, exerciseInput, options);
-        if (!saved.ok) throw new SetupAbort(saved.error, `${exerciseInput.exerciseId}${saved.message ? `: ${saved.message}` : ""}`);
-        exercises.push(saved.value);
-      }
-      const profiles: ExerciseProfile[] = [];
-      for (const profileInput of input.profiles) {
-        const saved = await initializeExerciseProfile(db, profileInput, options);
-        if (!saved.ok) throw new SetupAbort(saved.error, `${profileInput.exerciseId}${saved.message ? `: ${saved.message}` : ""}`);
-        profiles.push(saved.value);
-      }
-      return { exercises, profiles };
+      return writeAll(db, input, options);
     }),
-    // 하위 작업의 검증 실패는 원래 오류 코드로, IndexedDB 오류는 STORAGE_ERROR로 돌려준다
-    (error) => (error instanceof SetupAbort && error.code !== "STORAGE_ERROR" ? error.code : null),
+    mapAbort<E>,
+  );
+}
+
+/**
+ * 이미 저장된 설정에 새로 확정된 운동을 추가한다 (예: H-19로 추가된 스모 데드리프트).
+ * - 기존 운동·프로필·TM 이력·세션 기록은 건드리지 않는다
+ * - 추가할 운동의 프로필이 이미 있으면 PROFILE_ALREADY_EXISTS (덮어쓰기 금지)
+ * - 저장된 설정이 없으면 SETUP_NOT_FOUND (최초 설정은 saveInitialSetup으로 한 번에)
+ */
+export function addSetupExercises(
+  db: NsunsDatabase,
+  input: InitialSetupInput,
+  options?: RepositoryOptions,
+): Promise<StorageResult<SavedSetup, AddSetupExercisesError>> {
+  type E = AddSetupExercisesError;
+  return runStorage<SavedSetup, E>(
+    () =>
+      db.transaction("rw", [db.exercises, db.exerciseProfiles, db.tmChanges], async () => {
+        if (!isConsistent(input)) return new ValidationStop<E>("INVALID_SETUP");
+        if ((await db.exerciseProfiles.count()) === 0) return new ValidationStop<E>("SETUP_NOT_FOUND");
+        return writeAll(db, input, options);
+      }),
+    mapAbort<E>,
   );
 }
 

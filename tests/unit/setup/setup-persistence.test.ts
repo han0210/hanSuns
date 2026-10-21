@@ -2,11 +2,15 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createInitialSetupState, setupReducer, type SetupAction, type SetupState } from "@/features/setup-prototype/setupModel";
 import {
   buildInitialSetupInput,
+  buildSumoUpgradeInput,
   confirmSetup,
   restoreSetupState,
   SETUP_EXERCISE_IDS,
+  sumoEstimateFromSaved,
 } from "@/features/setup-prototype/setupPersistence";
-import { getSavedSetup, saveInitialSetup } from "@/storage/repositories/setupRepository";
+import { addSetupExercises, getSavedSetup, saveInitialSetup } from "@/storage/repositories/setupRepository";
+import { completeSet, startWorkoutSession } from "@/storage/repositories/workoutRepository";
+import { kg } from "@/domain/types/weight";
 import type { NsunsDatabase } from "@/storage/db";
 import { createTestDatabase, destroyDatabase, expectOk, openSameDatabase } from "../storage/helpers";
 
@@ -43,6 +47,8 @@ describe("buildInitialSetupInput — 화면 상태 → 저장 입력", () => {
     expect(profile("incline_bench_press")).toMatchObject({ oneRepMax: { value: 85 }, oneRepMaxSource: "ESTIMATE_ACCEPTED" });
     expect(profile("barbell_row")).toMatchObject({ oneRepMax: { value: 90 }, oneRepMaxSource: "USER_EDITED", estimateRuleId: "setup-barbell-row-v1" });
     expect(profile("barbell_shrug")).toMatchObject({ oneRepMax: { value: 45 }, oneRepMaxSource: "ESTIMATE_ACCEPTED" });
+    // H-19: 스모 = 컨벤셔널 데드리프트 140 × 0.50, 측정값이 아닌 추정 출처
+    expect(profile("sumo_deadlift")).toMatchObject({ oneRepMax: { value: 70 }, oneRepMaxSource: "ESTIMATE_ACCEPTED", estimateRuleId: "setup-sumo-deadlift-v1" });
     expect(profile("dumbbell_lateral_raise")).toMatchObject({ oneRepMax: null, t3WorkingWeight: { value: 8, unit: "kg" } });
     expect(input!.exercises.map((e) => e.exerciseId)).toEqual([...SETUP_EXERCISE_IDS]);
     expect(input!.exercises.every((e) => e.weightUnit === "kg" && e.increment > 0)).toBe(true);
@@ -63,8 +69,9 @@ describe("confirmSetup + 저장 계층", () => {
     const result = await confirmSetup(complete(filledState()), (input) => saveInitialSetup(db, input));
     expect(result.ok).toBe(true);
     const saved = expectOk(await getSavedSetup(db));
-    expect(saved.profiles).toHaveLength(13);
+    expect(saved.profiles).toHaveLength(14);
     expect(saved.profiles.find((p) => p.exerciseId === "ohp")).toMatchObject({ oneRepMax: 62.5, initialTM: 56.25, currentTM: 56.25 });
+    expect(saved.profiles.find((p) => p.exerciseId === "sumo_deadlift")).toMatchObject({ oneRepMax: 70, initialTM: 63, currentTM: 63, oneRepMaxSource: "ESTIMATE_ACCEPTED" });
   });
 
   it("저장 실패 시 ok:false와 재시도 안내 (화면은 완료로 넘어가지 않는다)", async () => {
@@ -108,5 +115,78 @@ describe("confirmSetup + 저장 계층", () => {
       profiles: [{ exerciseId: "bench_press", weightUnit: "kg", oneRepMax: 100, oneRepMaxSource: "DIRECT", estimateRuleId: null, initialTM: 90, currentTM: 90, t3WorkingWeight: null, t3WorkingWeightRevision: 0, updatedAt: "2026-10-21T00:00:00.000Z" }],
     });
     expect(partial.kind).toBe("partial");
+  });
+});
+
+describe("기존 저장 데이터 보존 — 스모 추가 이전(13개 운동) 설정", () => {
+  let db: NsunsDatabase;
+  beforeEach(() => {
+    db = createTestDatabase();
+  });
+  afterEach(async () => {
+    await destroyDatabase(db);
+  });
+
+  /** 스모가 없던 STEP 10 시점의 설정을 저장한다 */
+  async function saveLegacySetup() {
+    const input = buildInitialSetupInput(complete(filledState()))!;
+    const legacy = {
+      exercises: input.exercises.filter((e) => e.exerciseId !== "sumo_deadlift"),
+      profiles: input.profiles.filter((p) => p.exerciseId !== "sumo_deadlift"),
+    };
+    expectOk(await saveInitialSetup(db, legacy));
+  }
+
+  it("기존 설정은 needsUpgrade로 복원되고 저장된 값은 그대로 보인다", async () => {
+    await saveLegacySetup();
+    const restored = restoreSetupState(expectOk(await getSavedSetup(db)));
+    expect(restored.kind).toBe("needsUpgrade");
+    if (restored.kind !== "needsUpgrade") throw new Error("unexpected");
+    expect(restored.missing).toEqual(["sumo_deadlift"]);
+    expect(restored.state.direct.deadlift).toBe("140");
+    expect(restored.state.estimated.barbell_row).toEqual({ source: "EDITED", text: "90" });
+    expect(restored.state.estimated.sumo_deadlift).toEqual({ source: "ESTIMATE" });
+  });
+
+  it("스모만 추가 저장하고 기존 프로필·TM 이력·T3 기록은 바뀌지 않는다", async () => {
+    await saveLegacySetup();
+    const detail = expectOk(await startWorkoutSession(db, { scheduledDay: "MONDAY", workoutDate: "2026-10-19", exercises: [{ exerciseId: "cable_fly", tier: "T3", templateId: null, templateVersion: null, restSeconds: 30 }] }));
+    expectOk(await completeSet(db, `${detail.exercises[0].sessionExercise.sessionExerciseId}#1`, { actualWeight: kg(15), actualReps: 12 }));
+    const before = { profiles: await db.exerciseProfiles.toArray(), tm: await db.tmChanges.toArray(), sets: await db.setRecords.toArray(), sessions: await db.workoutSessions.toArray() };
+
+    const input = buildSumoUpgradeInput({ source: "EDITED", text: "75" });
+    expect(input).not.toBeNull();
+    expectOk(await addSetupExercises(db, input!));
+
+    expect((await db.tmChanges.toArray()).filter((c) => c.exerciseId !== "sumo_deadlift")).toEqual(before.tm);
+    expect((await db.exerciseProfiles.toArray()).filter((p) => p.exerciseId !== "sumo_deadlift")).toEqual(before.profiles);
+    expect(await db.setRecords.toArray()).toEqual(before.sets);
+    expect(await db.workoutSessions.toArray()).toEqual(before.sessions);
+    const sumo = await db.exerciseProfiles.get("sumo_deadlift");
+    expect(sumo).toMatchObject({ oneRepMax: 75, initialTM: 67.5, oneRepMaxSource: "USER_EDITED", estimateRuleId: "setup-sumo-deadlift-v1" });
+    expect(restoreSetupState(expectOk(await getSavedSetup(db))).kind).toBe("complete");
+  });
+
+  it("추정값 그대로 확정하면 저장된 데드리프트 1RM × 0.50", async () => {
+    await saveLegacySetup();
+    const saved = expectOk(await getSavedSetup(db));
+    const estimate = sumoEstimateFromSaved(saved);
+    expect(estimate).toBe(70);
+    expectOk(await addSetupExercises(db, buildSumoUpgradeInput({ source: "ACCEPTED", text: String(estimate) })!));
+    expect(await db.exerciseProfiles.get("sumo_deadlift")).toMatchObject({ oneRepMax: 70, oneRepMaxSource: "ESTIMATE_ACCEPTED" });
+  });
+
+  it("잘못된 값·자동 추정 상태는 저장하지 않고, 이미 있는 스모는 덮어쓰지 않는다", async () => {
+    await saveLegacySetup();
+    expect(buildSumoUpgradeInput({ source: "EDITED", text: "0" })).toBeNull();
+    expect(buildSumoUpgradeInput({ source: "ESTIMATE" })).toBeNull();
+    expectOk(await addSetupExercises(db, buildSumoUpgradeInput({ source: "EDITED", text: "75" })!));
+    expect(await addSetupExercises(db, buildSumoUpgradeInput({ source: "EDITED", text: "99" })!)).toMatchObject({ ok: false, error: "PROFILE_ALREADY_EXISTS" });
+    expect((await db.exerciseProfiles.get("sumo_deadlift"))?.oneRepMax).toBe(75);
+  });
+
+  it("설정이 아예 없으면 추가 저장을 거부한다 (SETUP_NOT_FOUND)", async () => {
+    expect(await addSetupExercises(db, buildSumoUpgradeInput({ source: "EDITED", text: "75" })!)).toMatchObject({ ok: false, error: "SETUP_NOT_FOUND" });
+    expect(await db.exerciseProfiles.count()).toBe(0);
   });
 });

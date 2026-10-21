@@ -4,8 +4,8 @@ import Link from "next/link";
 import { useEffect, useReducer, useState, type Dispatch, type ReactNode } from "react";
 import { formatKg, parsePositiveKg } from "@/lib/weightInput";
 import { getBrowserDatabase } from "@/storage/db";
-import { getSavedSetup, saveInitialSetup } from "@/storage/repositories/setupRepository";
-import { confirmSetup, restoreSetupState, SETUP_EQUIPMENT } from "../setupPersistence";
+import { addSetupExercises, getSavedSetup, saveInitialSetup } from "@/storage/repositories/setupRepository";
+import { buildSumoUpgradeInput, confirmSetup, restoreSetupState, SETUP_EQUIPMENT } from "../setupPersistence";
 import {
   createInitialSetupState,
   DIRECT_LIFT_IDS,
@@ -67,6 +67,8 @@ export function SetupPrototype({ persistent = false }: { persistent?: boolean })
   const [touched, setTouched] = useState<Set<string>>(() => new Set());
   const [attempted, setAttempted] = useState<Set<SetupStep>>(() => new Set());
   const [store, setStore] = useState<StoreStatus>(() => (persistent ? { kind: "loading" } : { kind: "ready" }));
+  /** 기존 설정에 스모 데드리프트(H-19로 추가)가 없어 추가 입력이 필요한지 */
+  const [needsSumo, setNeedsSumo] = useState(false);
 
   // 저장된 설정 복원 (브라우저에서만 실행: 서버 렌더링 중에는 IndexedDB에 접근하지 않는다)
   useEffect(() => {
@@ -85,7 +87,8 @@ export function SetupPrototype({ persistent = false }: { persistent?: boolean })
         return;
       }
       const restored = restoreSetupState(loaded.value);
-      if (restored.kind === "complete") dispatch({ type: "RESTORE", state: restored.state });
+      if (restored.kind === "complete" || restored.kind === "needsUpgrade") dispatch({ type: "RESTORE", state: restored.state });
+      setNeedsSumo(restored.kind === "needsUpgrade");
       if (restored.kind === "partial") {
         setStore({ kind: "unavailable", message: `저장된 설정이 일부 누락되었습니다 (${restored.missing.join(", ")}).` });
         return;
@@ -120,6 +123,28 @@ export function SetupPrototype({ persistent = false }: { persistent?: boolean })
       if (restored?.kind === "complete") dispatch({ type: "RESTORE", state: restored.state });
     }
     setStore({ kind: "error", message: result.message });
+  }
+
+  /** 기존 설정에 스모 데드리프트만 추가 저장한다. 다른 저장값·운동 기록은 바꾸지 않는다 */
+  async function handleAddSumo(entry: EstimatedEntry) {
+    const db = getBrowserDatabase();
+    const input = buildSumoUpgradeInput(entry);
+    if (!db || store.kind === "saving") return;
+    if (!input) {
+      setStore({ kind: "error", message: "스모 데드리프트 1RM은 0보다 큰 숫자(kg)여야 합니다." });
+      return;
+    }
+    setStore({ kind: "saving" });
+    const result = await addSetupExercises(db, input);
+    const loaded = await getSavedSetup(db);
+    const restored = loaded.ok ? restoreSetupState(loaded.value) : null;
+    if (restored && (restored.kind === "complete" || restored.kind === "needsUpgrade")) dispatch({ type: "RESTORE", state: restored.state });
+    setNeedsSumo(restored?.kind === "needsUpgrade");
+    if (result.ok || result.error === "PROFILE_ALREADY_EXISTS") {
+      setStore({ kind: "ready" });
+      return;
+    }
+    setStore({ kind: "error", message: "스모 데드리프트를 저장하지 못했습니다. 다시 시도해 주세요." });
   }
 
   if (persistent && (store.kind === "loading" || store.kind === "unavailable")) {
@@ -203,6 +228,8 @@ export function SetupPrototype({ persistent = false }: { persistent?: boolean })
             saving={store.kind === "saving"}
             saveError={store.kind === "error" ? store.message : null}
             onComplete={() => void handleComplete()}
+            needsSumo={persistent && needsSumo}
+            onAddSumo={(entry) => void handleAddSumo(entry)}
           />
         )}
       </main>
@@ -311,19 +338,6 @@ function EstimateStep({ state, dispatch, showError, touch }: StepProps) {
         {ESTIMATED_LIFT_IDS.map((id) => (
           <EstimateCard key={id} id={id} state={state} dispatch={dispatch} showError={showError} touch={touch} />
         ))}
-        <li className="rounded-2xl border border-dashed border-line p-4">
-          <div className="flex items-baseline justify-between gap-2">
-            <span className="font-semibold">스모 데드리프트</span>
-            <span className="shrink-0 text-xs text-fg-secondary">목 T2</span>
-          </div>
-          <p className="mt-2 text-sm leading-relaxed text-fg-secondary">
-            1RM 입력이 필요하지 않습니다. 원본 nSuns Sumo Deadlift T2 템플릿을 사용할 예정이며, 세트 비율이 참조하는
-            TM을 원본 시트에서 확인한 뒤 계산 방식을 확정합니다.
-          </p>
-          <span className="mt-2 inline-block rounded border border-warning/60 px-1.5 py-0.5 text-[11px] font-semibold text-warning">
-            원본 검증 대기 · 계산 없음
-          </span>
-        </li>
         <li className="rounded-2xl border border-dashed border-line p-4 text-sm text-fg-secondary">
           <span className="font-semibold text-fg">OHP (월 T2)</span>는 1단계의 OHP와 같은 운동 프로필·TM을 사용합니다.
         </li>
@@ -443,9 +457,12 @@ type ReviewStepProps = {
   saving: boolean;
   saveError: string | null;
   onComplete: () => void;
+  /** 저장된 설정에 스모 데드리프트가 없어 추가 입력이 필요한 경우 */
+  needsSumo?: boolean;
+  onAddSumo?: (entry: EstimatedEntry) => void;
 };
 
-function ReviewStep({ state, persistent, saving, saveError, onComplete }: ReviewStepProps) {
+function ReviewStep({ state, persistent, saving, saveError, onComplete, needsSumo = false, onAddSumo }: ReviewStepProps) {
   const pendingEstimates = ESTIMATED_LIFT_IDS.filter((id) => state.estimated[id].source === "ESTIMATE");
 
   return (
@@ -479,9 +496,6 @@ function ReviewStep({ state, persistent, saving, saveError, onComplete }: Review
           };
         })}
       />
-      <p className="mb-4 rounded-xl border border-dashed border-line px-3 py-2 text-xs text-fg-secondary">
-        스모 데드리프트: 원본 Sumo T2 템플릿 기준 TM 확인 대기 (값 없음)
-      </p>
 
       <section className="mb-4 rounded-2xl bg-surface p-4">
         <h3 className="text-sm font-semibold">T3 작업 중량 (7 × 12회)</h3>
@@ -506,9 +520,13 @@ function ReviewStep({ state, persistent, saving, saveError, onComplete }: Review
 
       {state.completed && persistent ? (
         <div className="space-y-3">
-          <p role="status" className="rounded-xl border border-accent/50 bg-accent/10 px-3 py-2 text-sm text-accent">
-            ✓ 이 기기에 저장되었습니다
-          </p>
+          {needsSumo && onAddSumo ? (
+            <SumoUpgradeCard state={state} saving={saving} onSave={onAddSumo} />
+          ) : (
+            <p role="status" className="rounded-xl border border-accent/50 bg-accent/10 px-3 py-2 text-sm text-accent">
+              ✓ 이 기기에 저장되었습니다
+            </p>
+          )}
           {saveError && (
             <p role="alert" className="rounded-xl border border-warning/50 bg-warning/10 px-3 py-2 text-sm text-warning">
               {saveError}
@@ -588,6 +606,56 @@ function ReviewTable({ title, rows }: { title: string; rows: ReviewRow[] }) {
         </tbody>
       </table>
       <p className="mt-1 text-right text-[11px] text-fg-secondary">단위 kg · 표시만 소수 둘째 자리</p>
+    </section>
+  );
+}
+
+/**
+ * 기존 설정에 스모 데드리프트 추정 1RM을 추가하는 카드 (H-19).
+ * 저장된 컨벤셔널 데드리프트 1RM × 50%를 추천하고, 사용자가 그대로 확정하거나 수정해 저장한다.
+ */
+function SumoUpgradeCard({ state, saving, onSave }: { state: SetupState; saving: boolean; onSave: (entry: EstimatedEntry) => void }) {
+  const rule = ESTIMATE_RULES.sumo_deadlift;
+  const estimate = getEstimate1RM(state, "sumo_deadlift");
+  const [text, setText] = useState(() => (estimate === null ? "" : formatKg(estimate)));
+  const value = parsePositiveKg(text);
+  const isEstimate = estimate !== null && value !== null && formatKg(value) === formatKg(estimate);
+
+  return (
+    <section className="rounded-2xl border border-warning/50 bg-surface p-4" aria-labelledby="sumo-upgrade-title">
+      <h3 id="sumo-upgrade-title" className="font-semibold">
+        스모 데드리프트 추가 필요
+      </h3>
+      <p className="mt-1 text-sm leading-relaxed text-fg-secondary">
+        목요일 T2 스모 데드리프트의 초기 1RM이 새로 필요합니다. 저장된 다른 값과 운동 기록은 바뀌지 않습니다.
+      </p>
+      <p id="sumo-upgrade-formula" className="mt-2 text-xs text-fg-secondary">
+        추정: 데드리프트 (컨벤셔널) {state.direct.deadlift} kg × {percent(rule.ratio)} ={" "}
+        <span className="tabular-nums text-fg">{estimate === null ? "—" : `${formatKg(estimate)} kg`}</span> · Hybrid MVP 추천값 (측정값·원본
+        nSuns 공식 아님)
+      </p>
+      <div className="mt-2">
+        <KgInput
+          id="sumo-upgrade"
+          label="스모 데드리프트 1RM (kg)"
+          value={text}
+          error={text.trim() !== "" && value === null ? "0보다 큰 숫자(kg)를 입력하세요" : null}
+          describedBy="sumo-upgrade-formula"
+          onChange={setText}
+        />
+      </div>
+      <p className="mt-2 flex justify-between text-sm">
+        <span className="text-fg-secondary">초기 TM (90%)</span>
+        <span className="font-semibold tabular-nums">{value === null ? "—" : `${formatKg(initialTM(value))} kg`}</span>
+      </p>
+      <button
+        type="button"
+        disabled={saving || value === null}
+        onClick={() => onSave(isEstimate ? { source: "ACCEPTED", text } : { source: "EDITED", text })}
+        className="mt-3 min-h-12 w-full rounded-xl bg-accent px-4 font-bold text-on-accent disabled:opacity-60"
+      >
+        {saving ? "저장 중…" : isEstimate ? "이 추정값으로 확정·저장" : "수정한 값으로 저장"}
+      </button>
     </section>
   );
 }

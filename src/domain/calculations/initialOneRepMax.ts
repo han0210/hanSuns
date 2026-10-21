@@ -1,16 +1,17 @@
 /**
- * 최초 설정의 초기 1RM 추천값 (CALCULATION_RULES 3.6, H-15 — v0.8 승인).
+ * 최초 설정의 초기 1RM 추천값 (CALCULATION_RULES 3.6, H-15 — v0.8 승인, 스모 데드리프트 H-19 — v0.13 확정).
  *
  * 4대 운동은 사용자가 1RM을 직접 입력하고(DIRECT), 나머지 운동은 기준 1RM × 비율로 추천한다.
  * 비율은 nSuns Hybrid MVP 초기 추천값이며 원본 nSuns 공식 환산 비율이 아니다.
  * 추천값은 사용자가 직접 입력한 1RM(DIRECT)과 다른 출처(source)로 유지한다.
+ * 이 추천값은 초기 TM(1RM × 0.9)의 출발점일 뿐이다. 세트별 반복·TM 비율(T1·T2 템플릿)은 별도 정책이다.
  */
 import type { OneRepMaxSource } from "../types/model";
 import { err, ok, type Mass, type Result } from "../types/weight";
 import { isPositiveFinite } from "./precision";
 
 export type DirectLiftId = "bench_press" | "deadlift" | "squat" | "ohp";
-export type EstimatedLiftId = "front_squat" | "barbell_row" | "incline_bench_press" | "barbell_shrug";
+export type EstimatedLiftId = "front_squat" | "barbell_row" | "incline_bench_press" | "barbell_shrug" | "sumo_deadlift";
 export type InitialLiftId = DirectLiftId | EstimatedLiftId;
 
 export type InitialEstimateRule = {
@@ -24,10 +25,12 @@ export const INITIAL_1RM_ESTIMATE_RULES: Readonly<Record<EstimatedLiftId, Initia
   barbell_row: { ruleId: "setup-barbell-row-v1", baseExerciseId: "deadlift", ratio: 0.55 },
   incline_bench_press: { ruleId: "setup-incline-bench-v1", baseExerciseId: "bench_press", ratio: 0.85 },
   barbell_shrug: { ruleId: "setup-barbell-shrug-v1", baseExerciseId: "barbell_row", ratio: 0.5 },
+  // H-19 (구 U-18): 컨벤셔널 데드리프트 1RM × 0.50. Hybrid MVP 초기 추천값이며 원본 nSuns 공식이 아니다
+  sumo_deadlift: { ruleId: "setup-sumo-deadlift-v1", baseExerciseId: "deadlift", ratio: 0.5 },
 };
 
 /** 슈러그가 로우를 기준으로 하므로 기준 운동이 먼저 오도록 순서를 고정한다 */
-const ESTIMATE_ORDER: readonly EstimatedLiftId[] = ["front_squat", "barbell_row", "incline_bench_press", "barbell_shrug"];
+const ESTIMATE_ORDER: readonly EstimatedLiftId[] = ["front_squat", "barbell_row", "incline_bench_press", "barbell_shrug", "sumo_deadlift"];
 
 /**
  * 기준 1RM에서 초기 1RM 추천값을 계산한다. 반올림하지 않고 기준값의 단위를 유지한다.

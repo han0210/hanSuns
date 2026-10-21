@@ -1,7 +1,7 @@
 # nSuns Hybrid — FUNCTIONS.md
 
 > **프로젝트:** nSuns Hybrid 5-Day
-> **버전:** v1.12 (2026-10-21, 휴식 기본값 T1·T2 60초, STEP 10 Lite 화면 연동 / v1.11 세션 완료 조건(U-21)·세션 중 T3 수정 우선(U-22) 확정, 표시 순서 / v1.10 STEP 09 로컬 저장 계층 구현 반영 / v1.9 덤벨 한 손 기준 확정(U-19) / v1.8 Exercise·ExerciseProfile 분리, camelCase 확정, DIRECT 의미 명시, `CALCULATION_RULES.md` v0.12 기준)
+> **버전:** v1.13 (2026-10-21, 스모 데드리프트 초기 추정 확정(U-18 → H-19) / v1.12 휴식 기본값 T1·T2 60초, STEP 10 Lite 화면 연동 / v1.11 세션 완료 조건(U-21)·세션 중 T3 수정 우선(U-22) 확정, 표시 순서 / v1.10 STEP 09 로컬 저장 계층 구현 반영 / v1.9 덤벨 한 손 기준 확정(U-19) / v1.8 Exercise·ExerciseProfile 분리, camelCase 확정, DIRECT 의미 명시, `CALCULATION_RULES.md` v0.13 기준)
 > **상태:** 기능 명세 초안 / 계산 템플릿 검증 대기
 > **기준 문서:** `docs/planning/PTS.md`, `docs/planning/PRD.md`
 > **목표:** 무료 모바일 웹 기반 운동 프로그램 관리 서비스
@@ -134,8 +134,7 @@ currentTM이 바뀔 때마다 변경 전·후 값, 사유(INITIAL / AMRAP_PROGRE
 | 구분 | 운동 | 입력 방식 |
 |---|---|---|
 | 직접 입력 | 벤치프레스, 컨벤셔널 데드리프트, 백 스쿼트, OHP | 1RM 필수 입력 |
-| 추천값 | 프론트 스쿼트(×0.80), 바벨 로우(×0.55), 인클라인 벤치프레스(×0.85), 바벨 슈러그(로우 ×0.50) | 승인된 MVP 초기 추천값을 확정 또는 수정 |
-| 보류 | 스모 데드리프트 | 원본 Sumo T2 템플릿 사용 예정, 기준 TM 확인 전 값 없음 (U-18) |
+| 추천값 | 프론트 스쿼트(×0.80), 바벨 로우(×0.55), 인클라인 벤치프레스(×0.85), 바벨 슈러그(로우 ×0.50), 스모 데드리프트(컨벤셔널 데드리프트 ×0.50, H-19) | 승인된 MVP 초기 추천값을 확정 또는 수정. 초기 TM = 확정 1RM × 0.90 |
 | 공통 프로필 | OHP (월 T2) | 직접 입력한 OHP 프로필 사용 (3.2.1) |
 | T3 | 케이블 플라이, 레그 컬, 레그 익스텐션, 덤벨 사이드 레터럴 레이즈, 랫풀다운 | 작업 중량 직접 입력 |
 
@@ -143,6 +142,8 @@ currentTM이 바뀔 때마다 변경 전·후 값, 사유(INITIAL / AMRAP_PROGRE
 
 - 추천값은 확정 전까지 계산에 쓰지 않는다. 확정하면 해당 운동의 `oneRepMax`이 된다.
 - 사용자가 확정하거나 수정한 값은 기준 운동 1RM이 바뀌어도 자동으로 바꾸지 않는다.
+- 스모 데드리프트(H-19, v1.13): 추정값은 측정 1RM이 아니며 원본 nSuns 공식이 아니다. 스모는 자체 프로필·TM을 가지며, 세트별 반복·TM 비율은 T2 템플릿 정책(U-08)을 따른다(아직 계산하지 않음).
+- 스모 도입 전에 설정을 저장한 사용자는 `/setup`에서 스모 값만 추가로 확정·수정해 저장한다(`addSetupExercises`). 기존 설정값·TM 이력·운동 기록은 바뀌지 않으며, 추가 전에도 T3 운동 기록은 계속할 수 있다.
 - 직접 입력 1RM(`DIRECT`)과 추정 기반 1RM(자동 추정·추정값 확정·사용자 수정)의 출처를 구분한다. 확정하거나 수정해도 `DIRECT`로 바꾸지 않는다.
 - `DIRECT`는 사용자가 1RM을 직접 입력했다는 뜻이며, 실제 측정이 검증되었다는 뜻이 아니다.
 - 추천 비율은 nSuns Hybrid MVP 초기 추천값이며 원본 nSuns 공식 환산 비율로 표시하지 않는다.
@@ -563,7 +564,8 @@ Dexie + IndexedDB로 구현했다(`src/storage/`). UI는 아직 연결하지 않
 | `completeSet()` | 세트 완료 트랜잭션, 휴식 타이머 시작 신호 반환 | `SET_ALREADY_COMPLETED`, `SESSION_NOT_EDITABLE`, `INVALID_ACTUAL_*` |
 | `resetSessionExercise()` | 운동별 전체 세트 리셋 | `RESET_NOT_ALLOWED`, `SESSION_EXERCISE_NOT_FOUND` |
 | `completeWorkoutSession()` | 하루 세션 완료 + T3 FST-7 증량 판정·반영 | `SESSION_HAS_INCOMPLETE_SETS`(U-21), `SESSION_NOT_IN_PROGRESS` |
-| `saveInitialSetup()` / `getSavedSetup()` | Setup 확정값(운동 13개·프로필·INITIAL TM 이력)을 한 트랜잭션으로 저장, 저장된 설정 조회 (STEP 10 추가) | `SETUP_ALREADY_EXISTS`, `INVALID_SETUP` + 개별 검증 오류 |
+| `saveInitialSetup()` / `getSavedSetup()` | Setup 확정값(운동 14개·프로필·INITIAL TM 이력)을 한 트랜잭션으로 저장, 저장된 설정 조회 (STEP 10 추가) | `SETUP_ALREADY_EXISTS`, `INVALID_SETUP` + 개별 검증 오류 |
+| `addSetupExercises()` | 저장된 설정에 새로 확정된 운동(스모 데드리프트)만 추가. 기존 데이터 불변 (v1.13) | `SETUP_NOT_FOUND`, `PROFILE_ALREADY_EXISTS` |
 
 - 모든 함수는 예외 대신 `{ ok: true, value }` / `{ ok: false, error, message? }`를 돌려준다. IndexedDB 자체 오류는 `STORAGE_ERROR`다.
 - UI는 저장 결과가 `ok`일 때만 완료로 표시한다(낙관적 완료 표시 금지).
@@ -582,7 +584,7 @@ Dexie + IndexedDB로 구현했다(`src/storage/`). UI는 아직 연결하지 않
 | `/workout` | 저장된 설정 확인 → 진행 중 세션이 있으면 `getActiveSession`으로 복원, 없으면 운동 시작 패널(요일·T3 작업 중량·휴식 시간) |
 | `/prototype/*` | 저장하지 않는 디자인 Mock (기존 유지) |
 
-- **범위 제한:** T1·T2 목표 세트는 원본 템플릿 미확정(U-01·U-02·U-08·U-18)이라 생성하지 않는다. 운동 세션은 선택한 요일의 **T3 FST-7 하나만** 포함하며, 화면에 "완전한 nSuns 프로그램이 아님"을 표시한다. 저장 계층 계약은 바꾸지 않았다(T3만 담은 계획은 기존 계약으로 유효).
+- **범위 제한:** T1·T2 목표 세트는 원본 템플릿 미확정(U-01·U-02·U-08)이라 생성하지 않는다. 운동 세션은 선택한 요일의 **T3 FST-7 하나만** 포함하며, 화면에 "완전한 nSuns 프로그램이 아님"을 표시한다. 저장 계층 계약은 바꾸지 않았다(T3만 담은 계획은 기존 계약으로 유효).
 - **세트 완료:** 화면 검증(`validateSetCompletion`) → `completeSet` → 저장 성공 후에만 완료·잠금·휴식 타이머. 실패 시 미완료 유지·입력값 보존·재시도. 같은 세트 연속 탭은 화면(진행 중 요청 추적)과 저장 계층에서 이중으로 막는다. 다른 탭에서 먼저 완료된 경우 저장소 기준으로 다시 불러와 안내한다.
 - **세션 완료:** 모든 세트 완료 전에는 버튼 비활성(H-17). 완료 시 FST-7 결과(증가·유지·사용자 수정 유지)를 표시한다.
 - **휴식 타이머:** 기본 T3 30초(사용자 변경 가능, 기기 localStorage 저장), 종료 예정 시각 기준 계산, 새로고침 후 복원, Vibration API 지원 브라우저에서만 진동, 알림음 없음.

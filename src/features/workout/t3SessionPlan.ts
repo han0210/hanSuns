@@ -1,7 +1,7 @@
 /**
  * T3 전용 기록 세션 계획 (STEP 10 Lite).
  *
- * T1·T2는 원본 nSuns 템플릿(세트 수·반복·TM 비율)이 검증되지 않아(U-01·U-02·U-08·U-18) 목표 세트를 만들 수 없다.
+ * T1·T2는 원본 nSuns 템플릿(세트 수·반복·TM 비율)이 검증되지 않아(U-01·U-02·U-08) 목표 세트를 만들 수 없다.
  * 테스트 FIXTURE나 추측한 비율을 실제 운동에 쓰지 않기 위해, 이번 단계의 실제 기록은 확정 규칙인
  * T3 FST-7(7세트 × 12회, 작업 중량 = 프로필 t3WorkingWeight)만 만든다.
  * 이 세션은 완전한 nSuns 프로그램이 아니다. 화면에도 그렇게 표시한다.
@@ -41,7 +41,7 @@ export const TRAINING_DAYS: readonly TrainingDay[] = [
 ];
 
 /** T1·T2를 기록할 수 없는 이유 (화면 안내용) */
-export const T1_T2_DISABLED_REASON = "원본 nSuns 세트 템플릿 검증 전이라 기록할 수 없습니다 (U-01·U-02·U-08·U-18).";
+export const T1_T2_DISABLED_REASON = "원본 nSuns 세트 템플릿 검증 전이라 기록할 수 없습니다 (U-01·U-02·U-08).";
 
 const WEEKDAYS: readonly Weekday[] = ["SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"];
 

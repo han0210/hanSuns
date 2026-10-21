@@ -19,13 +19,14 @@ const valueOf = (result: ReturnType<typeof estimateInitialOneRM>) => {
   return result.value;
 };
 
-describe("INITIAL_1RM_ESTIMATE_RULES (H-15, v0.8 승인)", () => {
-  it("승인된 4개 비율과 기준 운동", () => {
+describe("INITIAL_1RM_ESTIMATE_RULES (H-15 v0.8 승인, H-19 스모 v0.13 확정)", () => {
+  it("승인된 5개 비율과 기준 운동", () => {
     expect(INITIAL_1RM_ESTIMATE_RULES).toMatchObject({
       front_squat: { baseExerciseId: "squat", ratio: 0.8 },
       barbell_row: { baseExerciseId: "deadlift", ratio: 0.55 },
       incline_bench_press: { baseExerciseId: "bench_press", ratio: 0.85 },
       barbell_shrug: { baseExerciseId: "barbell_row", ratio: 0.5 },
+      sumo_deadlift: { baseExerciseId: "deadlift", ratio: 0.5, ruleId: "setup-sumo-deadlift-v1" },
     });
   });
 });
@@ -36,6 +37,8 @@ describe("estimateInitialOneRM", () => {
     ["barbell_row", 140, 77],
     ["incline_bench_press", 100, 85],
     ["barbell_shrug", 77, 38.5],
+    ["sumo_deadlift", 140, 70],
+    ["sumo_deadlift", 187.5, 93.75],
   ] as const)("%s: 기준 %d → %d", (liftId, base, expected) => {
     const estimate = valueOf(estimateInitialOneRM(liftId, kg(base)));
     expect(estimate.oneRepMax.value).toBeCloseTo(expected, 10);
@@ -116,5 +119,29 @@ describe("resolveInitialOneRepMaxes", () => {
     expect(
       resolveInitialOneRepMaxes({ direct, overrides: { barbell_row: { oneRepMax: kg(-1), source: "USER_EDITED" } } }),
     ).toEqual({ ok: false, error: "INVALID_OVERRIDE_1RM" });
+  });
+});
+
+describe("스모 데드리프트 초기 추정 (U-18 → H-19)", () => {
+  it("자동 추정: 컨벤셔널 데드리프트 1RM × 0.50, 확정 전에는 출처 없음(측정값 아님)", () => {
+    const result = resolveInitialOneRepMaxes({ direct, overrides: {} });
+    if (!result.ok) throw new Error(result.error);
+    expect(result.value.sumo_deadlift).toMatchObject({
+      oneRepMax: kg(70),
+      source: null,
+      estimateRuleId: "setup-sumo-deadlift-v1",
+      isEstimatePending: true,
+    });
+  });
+
+  it("사용자가 확정·수정한 스모 값은 데드리프트 1RM이 바뀌어도 유지되고 DIRECT로 바뀌지 않는다", () => {
+    const overrides = { sumo_deadlift: { oneRepMax: kg(80), source: "USER_EDITED" as const } };
+    const before = resolveInitialOneRepMaxes({ direct, overrides });
+    const after = resolveInitialOneRepMaxes({ direct: { ...direct, deadlift: kg(200) }, overrides });
+    if (!before.ok || !after.ok) throw new Error("unexpected");
+    expect(after.value.sumo_deadlift).toEqual(before.value.sumo_deadlift);
+    expect(after.value.sumo_deadlift).toMatchObject({ oneRepMax: kg(80), source: "USER_EDITED", estimateRuleId: "setup-sumo-deadlift-v1" });
+    // 확정하지 않은 다른 추정값(로우)은 새 기준으로 다시 계산된다
+    expect(after.value.barbell_row.oneRepMax.value).toBeCloseTo(110, 10);
   });
 });

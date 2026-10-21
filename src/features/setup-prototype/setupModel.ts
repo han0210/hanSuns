@@ -19,7 +19,7 @@ export const initialTM = (oneRepMax: number): number => oneRepMax * INITIAL_TM_R
 // ---------------------------------------------------------------------------
 
 export type DirectLiftId = "bench_press" | "deadlift" | "squat" | "ohp";
-export type EstimatedLiftId = "front_squat" | "barbell_row" | "incline_bench_press" | "barbell_shrug";
+export type EstimatedLiftId = "front_squat" | "barbell_row" | "incline_bench_press" | "barbell_shrug" | "sumo_deadlift";
 export type T3ExerciseId =
   | "cable_fly"
   | "leg_curl"
@@ -46,12 +46,13 @@ export type EstimateRule = LiftInfo & {
   ruleId: string;
 };
 
-/** nSuns Hybrid MVP 초기 1RM 추천 비율 (STEP 07 승인). 원본 nSuns 공식 비율이 아니다. */
+/** nSuns Hybrid MVP 초기 1RM 추천 비율 (STEP 07 승인, 스모는 H-19 확정). 원본 nSuns 공식 비율이 아니다. */
 export const ESTIMATE_RULES: Record<EstimatedLiftId, EstimateRule> = {
   front_squat: { name: "프론트 스쿼트", usage: "화 T2", baseId: "squat", ratio: 0.8, ruleId: "setup-front-squat-v1" },
   barbell_row: { name: "바벨 로우", usage: "토 T1 (Hybrid)", baseId: "deadlift", ratio: 0.55, ruleId: "setup-barbell-row-v1" },
   incline_bench_press: { name: "인클라인 벤치프레스", usage: "금 T2", baseId: "bench_press", ratio: 0.85, ruleId: "setup-incline-bench-v1" },
   barbell_shrug: { name: "바벨 슈러그", usage: "토 T2", baseId: "barbell_row", ratio: 0.5, ruleId: "setup-barbell-shrug-v1" },
+  sumo_deadlift: { name: "스모 데드리프트", usage: "목 T2", baseId: "deadlift", ratio: 0.5, ruleId: "setup-sumo-deadlift-v1" },
 };
 export const ESTIMATED_LIFT_IDS = Object.keys(ESTIMATE_RULES) as EstimatedLiftId[];
 

@@ -1,6 +1,6 @@
 # nSuns Hybrid — DATAMODEL.md
 
-> **버전:** v0.5 (2026-10-21, U-21·U-22 확정 반영, 완료 세트 잠금 강화, displayOrder / v0.4 STEP 09 Dexie 스키마 v1·저장 계층 구현 / v0.3 덤벨 한 손 기준 확정 / v0.2 Exercise·ExerciseProfile 분리, camelCase 확정, DIRECT 의미, 수정 차단 책임)
+> **버전:** v0.6 (2026-10-21, 스모 데드리프트 프로필 추가(H-19) / v0.5 U-21·U-22 확정 반영, 완료 세트 잠금 강화, displayOrder / v0.4 STEP 09 Dexie 스키마 v1·저장 계층 구현 / v0.3 덤벨 한 손 기준 확정 / v0.2 Exercise·ExerciseProfile 분리, camelCase 확정, DIRECT 의미, 수정 차단 책임)
 > **상태:** TypeScript 타입 확정 / Dexie 스키마 v1 구현 (UI 미연동)
 > **코드:** `src/domain/types/model.ts`, `src/domain/types/weight.ts`, `src/storage/db.ts`, `src/storage/repositories/`
 > **상위 문서:** `FUNCTIONS.md` 9·11장, `TECHSTACK.md` 5.4, `CALCULATION_RULES.md` 3·9장
@@ -125,7 +125,7 @@ ID 규칙: `sessionId`·`tmChangeId`는 UUID(`createId()`, HTTP LAN 접속 대�
 | 항목 | 현재 타입 처리 | 관련 |
 |---|---|---|
 | lb 단위 지원 범위·기본 증가 단위 | `WeightUnit`에 `lb`는 있으나 kg↔lb 변환 없음 | U-20 |
-| 원본 T1/T2 템플릿, 스모 데드리프트 기준 TM | `templateId`·`templateVersion`이 null 허용 | U-01, U-02, U-08, U-18 |
+| 원본 T1/T2 템플릿 (스모 포함 T2 세트 비율) | `templateId`·`templateVersion`이 null 허용 | U-01, U-02, U-08 (U-18은 v0.6에서 H-19로 해결) |
 | 완료·중도 종료 세션의 리셋 | 저장 계층이 거부(`RESET_NOT_ALLOWED`). 허용 시 처리 정책은 미확정 | U-14, U-15 |
 | 중도 종료(ABANDONED) 전환·재개 | 상태 값만 정의, 전환 함수는 후속 단계 | U-15 |
 | 1RM 수정 시 currentTM 처리 | `TMChangeReason.USER_RESET`만 정의 | U-05 |
@@ -134,6 +134,7 @@ ID 규칙: `sessionId`·`tmChangeId`는 UUID(`createId()`, HTTP LAN 접속 대�
 
 ## 8. 변경 이력
 
+- v0.6: 스모 데드리프트(H-19) 추가 — 타입·스키마 변경 없음. 운동 마스터 `sumo_deadlift`(BARBELL, kg)와 일반 ExerciseProfile(`ESTIMATE_ACCEPTED`/`USER_EDITED`, `estimateRuleId: setup-sumo-deadlift-v1`)로 저장. 기존 설정에는 `addSetupExercises`로 추가
 - v0.5: U-21(모든 세트 완료 시에만 COMPLETED)·U-22(세션 중 사용자 T3 수정 우선, 변경 번호) 확정 반영, 완료 세트 잠금을 "리셋 허가 + 대상 운동 + 4개 필드" 조건으로 강화, `displayOrder`·`t3WorkingWeightRevision`·`workingWeightRevisionAtSession` 추가, 표시 순서·유일 인덱스 검토(6.2절)
 - v0.4: STEP 09 — Dexie 스키마 v1(6.1절)과 저장 계층 구현, `SessionExercise.progressionEvaluatedAt` 추가, 수정 차단 책임(5장)을 구현 기준으로 갱신
 - v0.3: 덤벨 중량 한 손 기준 확정 (U-19 RESOLVED). 모든 덤벨 운동 공통 규칙이라 운동별 표기 필드를 두지 않음

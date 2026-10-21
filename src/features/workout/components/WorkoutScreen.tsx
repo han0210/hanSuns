@@ -46,7 +46,7 @@ type Phase =
   | { kind: "loading" }
   | { kind: "unavailable"; message: string }
   | { kind: "needsSetup" }
-  | { kind: "start"; profiles: ReadonlyMap<string, ExerciseProfile> }
+  | { kind: "start"; profiles: ReadonlyMap<string, ExerciseProfile>; needsSetupUpgrade: boolean }
   | { kind: "active" };
 
 type DialogState = { kind: "none" } | { kind: "reset"; sessionExerciseId: string } | { kind: "finish" } | { kind: "finished"; outcome: CompleteSessionOutcome };
@@ -89,7 +89,9 @@ export function WorkoutScreen() {
       setPhase({ kind: "unavailable", message: "저장된 기록을 읽지 못했습니다. 새로고침해 주세요." });
       return;
     }
-    if (restoreSetupState(setup.value).kind !== "complete") {
+    const restoredSetup = restoreSetupState(setup.value);
+    // needsUpgrade(기존 설정에 스모만 없음)는 T3 기록에 영향이 없으므로 운동은 진행하고 설정 추가만 안내한다
+    if (restoredSetup.kind !== "complete" && restoredSetup.kind !== "needsUpgrade") {
       setPhase({ kind: "needsSetup" });
       return;
     }
@@ -100,7 +102,11 @@ export function WorkoutScreen() {
       setPhase({ kind: "active" });
       return;
     }
-    setPhase({ kind: "start", profiles: new Map(setup.value.profiles.map((p) => [p.exerciseId, p])) });
+    setPhase({
+      kind: "start",
+      profiles: new Map(setup.value.profiles.map((p) => [p.exerciseId, p])),
+      needsSetupUpgrade: restoredSetup.kind === "needsUpgrade",
+    });
   }, []);
 
   useEffect(() => {
@@ -239,6 +245,7 @@ export function WorkoutScreen() {
     return (
       <StartPanel
         profiles={phase.profiles}
+        needsSetupUpgrade={phase.needsSetupUpgrade}
         onStarted={async (detail) => {
           const ui = toUiSession(detail, exerciseName, dayLabelOf(detail));
           dispatch({ type: "SESSION_LOADED", session: ui, timer: { phase: "idle" } });
@@ -426,13 +433,15 @@ function Shell({ children }: { children: React.ReactNode }) {
 
 type StartPanelProps = {
   profiles: ReadonlyMap<string, ExerciseProfile>;
+  /** 기존 설정에 새로 추가된 운동(스모 데드리프트)이 없음 */
+  needsSetupUpgrade: boolean;
   onStarted: (detail: SessionDetail) => void | Promise<void>;
   onActiveExists: () => void;
   onProfileChanged: () => void;
 };
 
 /** 운동 시작 패널: 요일 선택 → T3 운동·작업 중량·휴식 시간 확인 → 시작 */
-function StartPanel({ profiles, onStarted, onActiveExists, onProfileChanged }: StartPanelProps) {
+function StartPanel({ profiles, needsSetupUpgrade, onStarted, onActiveExists, onProfileChanged }: StartPanelProps) {
   // 브라우저 전용 싱글턴. 이 패널은 저장소 확인이 끝난 뒤(클라이언트)에만 렌더링된다
   const database = getBrowserDatabase();
   const [day, setDay] = useState<TrainingDay>(() => defaultTrainingDay(new Date()));
@@ -489,6 +498,15 @@ function StartPanel({ profiles, onStarted, onActiveExists, onProfileChanged }: S
     <div className="mx-auto w-full max-w-[480px] px-4 pb-10 pt-4">
       <p className="text-xs font-semibold tracking-[0.12em] text-fg-secondary">NSUNS HYBRID · WORKOUT</p>
       <h1 className="text-2xl font-bold">운동 시작</h1>
+
+      {needsSetupUpgrade && (
+        <p className="mt-3 rounded-xl border border-warning/40 bg-warning/10 px-3 py-2 text-xs leading-relaxed text-warning">
+          스모 데드리프트 초기 1RM이 아직 없습니다.{" "}
+          <Link href="/setup" className="inline-flex min-h-11 items-center font-semibold underline">
+            설정에서 추가하기
+          </Link>
+        </p>
+      )}
 
       <fieldset className="mt-4">
         <legend className="text-sm font-semibold">요일</legend>
