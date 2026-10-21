@@ -10,7 +10,8 @@
  * - 운동별 리셋은 SessionExercise 하나의 세트 전체와 리셋 이력을 한 트랜잭션으로 바꾼다(부분 리셋 없음).
  * - 진행 중(IN_PROGRESS·PAUSED) 세션은 한 번에 하나만 둔다. IndexedDB readwrite 트랜잭션은 같은 테이블을 쓰는
  *   다른 트랜잭션(다른 탭 포함)과 순서대로 실행되므로, 트랜잭션 안의 "조회 후 쓰기"가 탭 간 중복을 막는다.
- * - T1·T2 세트 목표값은 호출자가 계산해 넘긴다(템플릿 미확정 U-01·U-02). 저장 계층은 값을 보존만 한다.
+ * - T1·T2 세트 목표값은 템플릿(SetTemplate)을 넘기면 트랜잭션 안에서 세션 시작 TM 스냅샷으로 계산하고,
+ *   세트 목록을 넘기면 그 값을 그대로 보존한다.
  */
 import type {
   CompletedSetRecord,
@@ -28,6 +29,7 @@ import type {
 import type { Mass } from "@/domain/types/weight";
 import { isPositiveFinite } from "@/domain/calculations/precision";
 import { evaluateFST7Progress, FST7_SET_COUNT, FST7_TARGET_REPS, type Fst7Decision } from "@/domain/calculations/fst7Progress";
+import { calculateTemplateSets, type SetTemplate } from "@/domain/templates/hybridTemplates";
 import type { NsunsDatabase } from "../db";
 import { createId, systemClock, toIsoDateTime } from "../ids";
 import { runStorage, ValidationStop, type StorageResult } from "../result";
@@ -110,8 +112,13 @@ export type SessionExercisePlan = {
   readonly templateId: string | null;
   readonly templateVersion: number | null;
   readonly restSeconds: number;
-  /** T1·T2 필수(호출자 계산). T3는 생략하며 FST-7 7×12 세트를 자동 생성한다 */
+  /** T1·T2: sets 또는 template 중 하나만. T3는 둘 다 생략하며 FST-7 7×12 세트를 자동 생성한다 */
   readonly sets?: readonly PlannedSet[];
+  /**
+   * T1·T2 세트 템플릿 (Hybrid 자체 템플릿 H-20·H-21). 지정하면 세션 시작 시점 TM 스냅샷으로
+   * 목표 중량 = roundToIncrement(TM × 비율)을 같은 트랜잭션에서 계산한다. templateId·templateVersion과 일치해야 한다.
+   */
+  readonly template?: SetTemplate;
 };
 
 export type StartSessionInput = {
@@ -126,6 +133,7 @@ export type StartSessionError =
   | "PROFILE_NOT_FOUND"
   | "UNIT_MISMATCH"
   | "MISSING_SNAPSHOT_VALUE"
+  | "TEMPLATE_CALCULATION_FAILED"
   | "ACTIVE_SESSION_EXISTS";
 
 const isNonNegativeInteger = (value: number): boolean => Number.isInteger(value) && value >= 0;
@@ -138,7 +146,15 @@ function isValidPlan(input: StartSessionInput): boolean {
   if (keys.size !== input.exercises.length) return false;
   return input.exercises.every((plan) => {
     if (!isNonNegativeInteger(plan.restSeconds)) return false;
-    if (plan.tier === "T3") return plan.sets === undefined;
+    if (plan.tier === "T3") return plan.sets === undefined && plan.template === undefined;
+    if (plan.template !== undefined) {
+      return (
+        plan.sets === undefined &&
+        plan.template.tier === plan.tier &&
+        plan.template.templateId === plan.templateId &&
+        plan.template.templateVersion === plan.templateVersion
+      );
+    }
     const sets = plan.sets ?? [];
     if (sets.length === 0) return false;
     const numbers = new Set(sets.map((s) => s.setNumber));
@@ -205,9 +221,21 @@ export function startWorkoutSession(
           progressionEvaluatedAt: null,
         });
 
-        const planned: readonly PlannedSet[] = isT3
-          ? Array.from({ length: FST7_SET_COUNT }, (_, i) => ({ setNumber: i + 1, targetWeight: snapshot, targetReps: FST7_TARGET_REPS, isAmrap: false }))
-          : (plan.sets ?? []);
+        let planned: readonly PlannedSet[];
+        if (isT3) {
+          planned = Array.from({ length: FST7_SET_COUNT }, (_, i) => ({ setNumber: i + 1, targetWeight: snapshot, targetReps: FST7_TARGET_REPS, isAmrap: false }));
+        } else if (plan.template) {
+          // 스냅샷 TM(반올림하지 않은 값)과 운동의 증가 단위로 계산 → 같은 트랜잭션이라 TM 변경과 어긋나지 않는다
+          const calculated = calculateTemplateSets(
+            plan.template,
+            { value: snapshot, unit: exercise.weightUnit },
+            { value: exercise.increment, unit: exercise.weightUnit },
+          );
+          if (!calculated.ok) return new ValidationStop<E>("TEMPLATE_CALCULATION_FAILED", `${plan.tier}:${plan.exerciseId}: ${calculated.error}`);
+          planned = calculated.value;
+        } else {
+          planned = plan.sets ?? [];
+        }
         for (const set of planned) {
           setRecords.push({
             setRecordId: `${sessionExerciseId}#${set.setNumber}`,

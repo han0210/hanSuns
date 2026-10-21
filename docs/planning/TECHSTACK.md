@@ -1,6 +1,6 @@
 # nSuns Hybrid — TECHSTACK.md
 
-> **버전:** v1.9 (2026-10-21, STEP 10 Lite 화면 연동·Vercel 배포 점검 / v1.8 완료 세트 잠금 강화·세션 완료 조건 반영 / v1.7 STEP 09 Dexie 저장 계층 구현 / v1.6 Vitest 도입·도메인 폴더 반영)  
+> **버전:** v1.10 (2026-10-21, Hybrid T1·T2 템플릿 전체 세션 / v1.9 STEP 10 Lite 화면 연동·Vercel 배포 점검 / v1.8 완료 세트 잠금 강화·세션 완료 조건 반영 / v1.7 STEP 09 Dexie 저장 계층 구현 / v1.6 Vitest 도입·도메인 폴더 반영)  
 > **상태:** 기술 스택 권장안 / 개발 전 계산 템플릿 검증 필요  
 > **상위 문서:** `docs/planning/PTS.md`, `docs/planning/PRD.md`, `docs/planning/FUNCTIONS.md`  
 > **권장 저장 경로:** `docs/planning/TECHSTACK.md`  
@@ -58,7 +58,7 @@
 - **T2:** 종목 교체 가능. 서로 다른 종목은 독립적인 1RM·TM을 가지며, 새 종목 선택 시 해당 currentTM 및 운동 유형별 T2 템플릿을 이용해 전체 목표 세트를 재계산. T1과 같은 exerciseId는 공통 프로필·currentTM을 참조.
 - **T3:** 종목 교체 가능. **12회 × 7세트 고정**. 초기 작업 중량 직접 입력; 7세트 전부 목표를 달성한 경우 다음 세션에 운동별 설정 단위만큼 증량.
 - **중량 단위:** 종목별로 설정하며, 덤벨은 한 손 중량인지 명확히 표기.
-- **휴식 타이머:** T1 60초 / T2 60초 / T3 30초 기본값. 사용자 조절 가능.
+- **휴식 타이머:** T1·T2·T3 60초 기본값. 사용자 조절 가능.
 - **기록:** 회원가입 없이 기기·브라우저별 로컬 저장.
 
 **중요:** 원본 nSuns 요일별 T1 세트표, 바벨 로우가 재사용할 벤치형 T1 템플릿의 세트 데이터, T2 운동 유형별 세트 비율, AMRAP 증량 고정값은 **아직 검증·확정되지 않았다**. 개발자가 비율을 추측해 넣지 않도록 템플릿 승인 전 해당 계산을 활성화하지 않는다.
@@ -125,7 +125,7 @@ nsuns-hybrid/
 │   │   └── timer/                   # 휴식 카운트다운
 │   ├── domain/
 │   │   ├── calculations/            # pure TS 계산 함수
-│   │   ├── templates/               # 검증된 프로그램 템플릿
+│   │   ├── templates/               # Hybrid 자체 T1·T2 템플릿 (hybridTemplates.ts)
 │   │   └── types/                   # 핵심 도메인 타입
 │   ├── storage/
 │   │   ├── db.ts                    # Dexie DB 및 버전

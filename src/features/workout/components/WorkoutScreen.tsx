@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
-import type { ExerciseProfile } from "@/domain/types/model";
+import type { Exercise, ExerciseProfile, Tier } from "@/domain/types/model";
+import { calculateTemplateSets } from "@/domain/templates/hybridTemplates";
 import { kg } from "@/domain/types/weight";
 import { formatKg, parsePositiveKg } from "@/lib/weightInput";
 import { getBrowserDatabase, type NsunsDatabase } from "@/storage/db";
@@ -26,15 +27,16 @@ import { findSet, getSessionProgress, toSetKey, validateSetCompletion } from "@/
 import { createInitialState, getTimerRemainingMs, workoutReducer, type RestTimerState } from "@/features/workout-prototype/workoutReducer";
 import type { WorkoutSession as UiSession } from "@/features/workout-prototype/types";
 import { loadRestSeconds, loadTimer, saveRestSeconds, saveTimer } from "../restTimerStorage";
-import { storageErrorMessage, toSetRecordId, toUiSession } from "../sessionMapper";
+import { sessionScopeOf, storageErrorMessage, toSetRecordId, toUiSession } from "../sessionMapper";
 import {
-  buildT3SessionPlan,
+  buildSessionPlan,
   defaultTrainingDay,
+  HYBRID_TEMPLATE_NOTICE,
   normalizeRestSeconds,
   REST_DEFAULT_SECONDS,
   REST_MAX_SECONDS,
   REST_MIN_SECONDS,
-  T1_T2_DISABLED_REASON,
+  TIER_TEMPLATES,
   TRAINING_DAYS,
   type TrainingDay,
 } from "../t3SessionPlan";
@@ -46,19 +48,29 @@ type Phase =
   | { kind: "loading" }
   | { kind: "unavailable"; message: string }
   | { kind: "needsSetup" }
-  | { kind: "start"; profiles: ReadonlyMap<string, ExerciseProfile>; needsSetupUpgrade: boolean }
+  | {
+      kind: "start";
+      profiles: ReadonlyMap<string, ExerciseProfile>;
+      exercises: ReadonlyMap<string, Exercise>;
+      needsSetupUpgrade: boolean;
+    }
   | { kind: "active" };
 
 type DialogState = { kind: "none" } | { kind: "reset"; sessionExerciseId: string } | { kind: "finish" } | { kind: "finished"; outcome: CompleteSessionOutcome };
 
 const dayLabelOf = (detail: SessionDetail) =>
-  `${TRAINING_DAYS.find((d) => d.weekday === detail.session.scheduledDay)?.label ?? ""}요일 · T3 기록 · ${detail.session.workoutDate}`;
+  `${TRAINING_DAYS.find((d) => d.weekday === detail.session.scheduledDay)?.label ?? ""}요일 · ${
+    sessionScopeOf(detail) === "T3_ONLY" ? "T3 전용 (이전 버전 세션)" : "T1·T2·T3"
+  } · ${detail.session.workoutDate}`;
+
+/** 티어별 세트 데이터 출처 배지 */
+const DATA_LABEL: Record<Tier, string> = { T1: "Hybrid T1 템플릿", T2: "Hybrid T2 템플릿", T3: "FST-7" };
 
 /**
- * 실제 운동 기록 화면 (/workout, STEP 10 Lite).
+ * 실제 운동 기록 화면 (/workout). T1·T2(Hybrid 자체 템플릿)·T3(FST-7) 전체 세션.
  *
  * - 저장 계층(Dexie)을 단일 기준으로 쓴다. 세트 완료는 completeSet() 저장 성공 후에만 완료·잠금 표시한다.
- * - T1·T2는 원본 템플릿 미확정으로 기록하지 않고 이유만 표시한다. 실제 기록은 확정 규칙인 T3 FST-7만 만든다.
+ * - 이전 버전의 T3 전용 세션은 그대로 복원·완료할 수 있고, T1·T2를 끼워 넣지 않는다.
  * - 휴식 타이머는 종료 예정 시각(endAt) 기준으로 계산하고, 새로고침 후에도 복원한다.
  */
 export function WorkoutScreen() {
@@ -105,6 +117,7 @@ export function WorkoutScreen() {
     setPhase({
       kind: "start",
       profiles: new Map(setup.value.profiles.map((p) => [p.exerciseId, p])),
+      exercises: new Map(setup.value.exercises.map((e) => [e.exerciseId, e])),
       needsSetupUpgrade: restoredSetup.kind === "needsUpgrade",
     });
   }, []);
@@ -245,6 +258,7 @@ export function WorkoutScreen() {
     return (
       <StartPanel
         profiles={phase.profiles}
+        exercises={phase.exercises}
         needsSetupUpgrade={phase.needsSetupUpgrade}
         onStarted={async (detail) => {
           const ui = toUiSession(detail, exerciseName, dayLabelOf(detail));
@@ -260,6 +274,7 @@ export function WorkoutScreen() {
   const progress = getSessionProgress(session);
   const progressPercent = progress.total === 0 ? 0 : Math.round((progress.completed / progress.total) * 100);
   const allDone = progress.total > 0 && progress.completed === progress.total;
+  const isT3OnlySession = session.exercises.length > 0 && session.exercises.every((ex) => ex.tier === "T3");
   const timerExerciseName =
     timer.phase === "idle" ? null : (session.exercises.find((ex) => ex.sessionExerciseId === timer.sessionExerciseId)?.exerciseName ?? null);
   const resetTarget = dialog.kind === "reset" ? session.exercises.find((ex) => ex.sessionExerciseId === dialog.sessionExerciseId) : undefined;
@@ -276,9 +291,16 @@ export function WorkoutScreen() {
         </span>
       </header>
 
-      <p className="mt-3 rounded-xl border border-warning/40 bg-warning/10 px-3 py-2 text-xs leading-relaxed text-warning">
-        <strong className="font-bold">T3(FST-7)만 기록합니다.</strong> 완전한 nSuns 프로그램이 아닙니다. T1·T2는 {T1_T2_DISABLED_REASON}
-      </p>
+      {isT3OnlySession ? (
+        <p className="mt-3 rounded-xl border border-warning/40 bg-warning/10 px-3 py-2 text-xs leading-relaxed text-warning">
+          이전 버전에서 시작한 <strong className="font-bold">T3 전용 세션</strong>입니다. 기존 기록 그대로 이어서 완료할 수 있으며, T1·T2는 다음 세션부터 함께
+          기록됩니다.
+        </p>
+      ) : (
+        <p className="mt-3 rounded-xl border border-line bg-surface px-3 py-2 text-xs leading-relaxed text-fg-secondary">
+          {HYBRID_TEMPLATE_NOTICE} T1·T2 TM은 자동으로 올리지 않습니다.
+        </p>
+      )}
 
       {notice && (
         <p role="alert" className="mt-3 flex items-start justify-between gap-2 rounded-xl border border-danger/50 bg-danger/10 px-3 py-2 text-sm text-danger">
@@ -300,6 +322,23 @@ export function WorkoutScreen() {
         <div className="mt-2 h-2 overflow-hidden rounded-full bg-elevated" role="progressbar" aria-label="전체 세트 진행률" aria-valuemin={0} aria-valuemax={progress.total} aria-valuenow={progress.completed}>
           <div className="h-full rounded-full bg-accent motion-safe:transition-[width]" style={{ width: `${progressPercent}%` }} />
         </div>
+        {session.exercises.length > 1 && (
+          <ul className="mt-3 grid grid-cols-3 gap-2 text-center text-xs">
+            {session.exercises.map((exercise) => {
+              const done = exercise.sets.filter((set) => set.completed).length;
+              const complete = done === exercise.sets.length;
+              return (
+                <li key={exercise.sessionExerciseId} className="rounded-lg bg-elevated px-1 py-2">
+                  <span className="block font-bold">{exercise.tier}</span>
+                  <span className={`tabular-nums ${complete ? "font-semibold text-accent" : "text-fg-secondary"}`}>
+                    {complete ? "✓ " : ""}
+                    {done}/{exercise.sets.length}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        )}
       </section>
 
       <div className="mt-4 space-y-3">
@@ -311,7 +350,7 @@ export function WorkoutScreen() {
             expanded={state.expandedExerciseId === exercise.sessionExerciseId}
             savingKeys={state.savingKeys}
             errors={state.errors}
-            dataLabel="FST-7 · 기기에 저장"
+            dataLabel={DATA_LABEL[exercise.tier]}
             allowTargetEdit={false}
             onToggle={() => dispatch({ type: "TOGGLE_EXPAND", sessionExerciseId: exercise.sessionExerciseId })}
             onDraftChange={(setNumber, field, value) =>
@@ -395,6 +434,7 @@ export function WorkoutScreen() {
       >
         <p>완료하면 기록이 잠기고 리셋할 수 없습니다.</p>
         <p className="text-xs">FST-7 성공(7세트 모두 12회 이상, 목표 중량 이상)이면 다음 작업 중량이 한 단계 올라갑니다.</p>
+        {!isT3OnlySession && <p className="text-xs">T1·T2 TM은 자동으로 올리지 않습니다 (AMRAP 증량 규칙 미확정).</p>}
       </ConfirmationDialog>
 
       <ConfirmationDialog
@@ -416,6 +456,9 @@ export function WorkoutScreen() {
                 : `작업 중량 유지 (${formatKg(p.decision.nextWorkingWeight.value)}kg)`}
             </p>
           ))}
+        {dialog.kind === "finished" && dialog.outcome.pendingProgressions.length > 0 && (
+          <p className="text-xs">T1·T2 기록은 저장되었고, TM은 바뀌지 않았습니다.</p>
+        )}
       </ConfirmationDialog>
     </div>
   );
@@ -433,6 +476,7 @@ function Shell({ children }: { children: React.ReactNode }) {
 
 type StartPanelProps = {
   profiles: ReadonlyMap<string, ExerciseProfile>;
+  exercises: ReadonlyMap<string, Exercise>;
   /** 기존 설정에 새로 추가된 운동(스모 데드리프트)이 없음 */
   needsSetupUpgrade: boolean;
   onStarted: (detail: SessionDetail) => void | Promise<void>;
@@ -440,32 +484,48 @@ type StartPanelProps = {
   onProfileChanged: () => void;
 };
 
-/** 운동 시작 패널: 요일 선택 → T3 운동·작업 중량·휴식 시간 확인 → 시작 */
-function StartPanel({ profiles, needsSetupUpgrade, onStarted, onActiveExists, onProfileChanged }: StartPanelProps) {
+const TIERS: readonly Tier[] = ["T1", "T2", "T3"];
+
+/** 운동 시작 패널: 요일 선택 → T1·T2·T3 운동과 기준 중량 확인 → 휴식 시간 → 시작 */
+function StartPanel({ profiles, exercises, needsSetupUpgrade, onStarted, onActiveExists, onProfileChanged }: StartPanelProps) {
   // 브라우저 전용 싱글턴. 이 패널은 저장소 확인이 끝난 뒤(클라이언트)에만 렌더링된다
   const database = getBrowserDatabase();
   const [day, setDay] = useState<TrainingDay>(() => defaultTrainingDay(new Date()));
-  const [restSeconds, setRestSeconds] = useState(() => loadRestSeconds("T3"));
+  const [rest, setRest] = useState<Record<Tier, number>>(() => ({ T1: loadRestSeconds("T1"), T2: loadRestSeconds("T2"), T3: loadRestSeconds("T3") }));
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
   const [editing, setEditing] = useState(false);
   const [weightDraft, setWeightDraft] = useState("");
 
-  const profile = profiles.get(day.t3ExerciseId);
-  const workingWeight = profile?.t3WorkingWeight ?? null;
-  const isDumbbell = day.t3ExerciseId === "dumbbell_lateral_raise";
+  const t3Profile = profiles.get(day.t3ExerciseId);
+  const workingWeight = t3Profile?.t3WorkingWeight ?? null;
+  const isDumbbell = exercises.get(day.t3ExerciseId)?.equipment === "DUMBBELL";
+  const rows = (["T1", "T2"] as const).map((tier) => {
+    const exerciseId = tier === "T1" ? day.t1ExerciseId : day.t2ExerciseId;
+    const profile = profiles.get(exerciseId);
+    const exercise = exercises.get(exerciseId);
+    const tm = profile?.currentTM ?? null;
+    // 미리보기: 저장 계층과 같은 함수로 계산 (실제 목표는 시작 시점 TM 스냅샷으로 다시 계산)
+    const preview =
+      tm !== null && exercise
+        ? calculateTemplateSets(TIER_TEMPLATES[tier], { value: tm, unit: exercise.weightUnit }, { value: exercise.increment, unit: exercise.weightUnit })
+        : null;
+    const weights = preview?.ok ? preview.value.map((s) => s.targetWeight) : [];
+    return { tier, exerciseId, tm, weights, unit: exercise?.weightUnit ?? "kg" };
+  });
+  const missingProfile = rows.some((row) => row.tm === null) || workingWeight === null;
 
-  function changeRest(delta: number) {
-    const next = normalizeRestSeconds(restSeconds + delta, REST_DEFAULT_SECONDS.T3);
-    setRestSeconds(next);
-    saveRestSeconds("T3", next);
+  function changeRest(tier: Tier, delta: number) {
+    const next = normalizeRestSeconds(rest[tier] + delta, REST_DEFAULT_SECONDS[tier]);
+    setRest((prev) => ({ ...prev, [tier]: next }));
+    saveRestSeconds(tier, next);
   }
 
   async function start() {
     if (!database || starting) return;
     setStarting(true);
     setError(null);
-    const result = await startWorkoutSession(database, buildT3SessionPlan(day, new Date(), restSeconds));
+    const result = await startWorkoutSession(database, buildSessionPlan(day, new Date(), rest));
     setStarting(false);
     if (result.ok) {
       await onStarted(result.value);
@@ -501,7 +561,7 @@ function StartPanel({ profiles, needsSetupUpgrade, onStarted, onActiveExists, on
 
       {needsSetupUpgrade && (
         <p className="mt-3 rounded-xl border border-warning/40 bg-warning/10 px-3 py-2 text-xs leading-relaxed text-warning">
-          스모 데드리프트 초기 1RM이 아직 없습니다.{" "}
+          스모 데드리프트 초기 1RM이 아직 없습니다 (목요일 T2).{" "}
           <Link href="/setup" className="inline-flex min-h-11 items-center font-semibold underline">
             설정에서 추가하기
           </Link>
@@ -519,6 +579,7 @@ function StartPanel({ profiles, needsSetupUpgrade, onStarted, onActiveExists, on
               onClick={() => {
                 setDay(d);
                 setEditing(false);
+                setError(null);
               }}
               className={`min-h-11 rounded-xl text-sm font-semibold ${d.weekday === day.weekday ? "bg-accent text-on-accent" : "bg-surface text-fg"}`}
             >
@@ -529,22 +590,28 @@ function StartPanel({ profiles, needsSetupUpgrade, onStarted, onActiveExists, on
       </fieldset>
 
       <ul className="mt-4 space-y-2">
-        {[
-          { tier: "T1", name: day.t1Name },
-          { tier: "T2", name: day.t2Name },
-        ].map((row) => (
-          <li key={row.tier} className="rounded-2xl border border-dashed border-line p-3 opacity-80">
+        {rows.map((row) => (
+          <li key={row.tier} className="rounded-2xl bg-surface p-4">
             <div className="flex items-center gap-2">
-              <span className="rounded-md bg-elevated px-2 py-1 text-xs font-bold text-fg-muted">{row.tier}</span>
-              <span className="font-semibold text-fg-secondary">{row.name}</span>
-              <span className="ml-auto shrink-0 rounded border border-warning/60 px-1.5 py-0.5 text-[11px] font-semibold text-warning">기록 불가</span>
+              <span className="rounded-md bg-elevated px-2 py-1 text-xs font-bold">{row.tier}</span>
+              <span className="min-w-0 truncate font-semibold">{exerciseName(row.exerciseId)}</span>
+              <span className="ml-auto shrink-0 text-xs text-fg-secondary">{TIER_TEMPLATES[row.tier].sets.length}세트</span>
             </div>
-            <p className="mt-1 text-xs text-fg-secondary">{T1_T2_DISABLED_REASON}</p>
+            {row.tm === null ? (
+              <p className="mt-2 text-xs text-warning">설정값이 없습니다. 초기 설정에서 추가하세요.</p>
+            ) : (
+              <p className="mt-2 flex items-baseline justify-between gap-2 text-sm">
+                <span className="text-fg-secondary">TM {formatKg(row.tm)} {row.unit}</span>
+                <span className="text-right text-xs tabular-nums text-fg-secondary">
+                  {row.weights.length > 0 ? `${formatKg(Math.min(...row.weights))}~${formatKg(Math.max(...row.weights))} ${row.unit}` : "—"}
+                </span>
+              </p>
+            )}
           </li>
         ))}
-        <li className="rounded-2xl bg-surface p-4 ring-1 ring-accent/40">
+        <li className="rounded-2xl bg-surface p-4">
           <div className="flex items-center gap-2">
-            <span className="rounded-md bg-accent px-2 py-1 text-xs font-bold text-on-accent">T3</span>
+            <span className="rounded-md bg-elevated px-2 py-1 text-xs font-bold">T3</span>
             <span className="min-w-0 truncate font-semibold">{exerciseName(day.t3ExerciseId)}</span>
             <span className="ml-auto shrink-0 text-xs text-fg-secondary">7세트 × 12회</span>
           </div>
@@ -581,28 +648,34 @@ function StartPanel({ profiles, needsSetupUpgrade, onStarted, onActiveExists, on
               }}
               className="mt-2 min-h-11 w-full rounded-xl border border-line text-sm"
             >
-              작업 중량 변경
+              T3 작업 중량 변경
             </button>
           )}
         </li>
       </ul>
+      <p className="mt-2 text-xs leading-relaxed text-fg-secondary">{HYBRID_TEMPLATE_NOTICE}</p>
 
-      <section className="mt-4 rounded-2xl bg-surface p-4" aria-label="T3 휴식 시간">
-        <div className="flex items-center justify-between gap-2">
-          <span className="text-sm font-semibold">세트 간 휴식</span>
-          <div className="flex items-center gap-2">
-            <button type="button" onClick={() => changeRest(-15)} disabled={restSeconds <= REST_MIN_SECONDS} className="min-h-11 min-w-11 rounded-xl border border-line text-sm disabled:opacity-35" aria-label="휴식 15초 줄이기">
-              −15
-            </button>
-            <span className="w-14 text-center text-lg font-bold tabular-nums" aria-live="polite">
-              {restSeconds}초
-            </span>
-            <button type="button" onClick={() => changeRest(15)} disabled={restSeconds >= REST_MAX_SECONDS} className="min-h-11 min-w-11 rounded-xl border border-line text-sm disabled:opacity-35" aria-label="휴식 15초 늘리기">
-              +15
-            </button>
-          </div>
-        </div>
-        <p className="mt-1 text-xs text-fg-secondary">기본 {REST_DEFAULT_SECONDS.T3}초. 바꾼 값은 이 기기에 저장됩니다.</p>
+      <section className="mt-4 rounded-2xl bg-surface p-4" aria-label="세트 간 휴식 시간">
+        <h2 className="text-sm font-semibold">세트 간 휴식</h2>
+        <ul className="mt-2 space-y-1">
+          {TIERS.map((tier) => (
+            <li key={tier} className="flex items-center justify-between gap-2">
+              <span className="text-sm text-fg-secondary">{tier}</span>
+              <div className="flex items-center gap-2">
+                <button type="button" onClick={() => changeRest(tier, -15)} disabled={rest[tier] <= REST_MIN_SECONDS} className="min-h-11 min-w-11 rounded-xl border border-line text-sm disabled:opacity-35" aria-label={`${tier} 휴식 15초 줄이기`}>
+                  −15
+                </button>
+                <span className="w-14 text-center text-base font-bold tabular-nums" aria-live="polite">
+                  {rest[tier]}초
+                </span>
+                <button type="button" onClick={() => changeRest(tier, 15)} disabled={rest[tier] >= REST_MAX_SECONDS} className="min-h-11 min-w-11 rounded-xl border border-line text-sm disabled:opacity-35" aria-label={`${tier} 휴식 15초 늘리기`}>
+                  +15
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
+        <p className="mt-1 text-xs text-fg-secondary">기본 {REST_DEFAULT_SECONDS.T1}초. 바꾼 값은 이 기기에 저장됩니다.</p>
       </section>
 
       {error && (
@@ -614,12 +687,12 @@ function StartPanel({ profiles, needsSetupUpgrade, onStarted, onActiveExists, on
       <button
         type="button"
         onClick={() => void start()}
-        disabled={starting || workingWeight === null || !database}
+        disabled={starting || missingProfile || !database}
         className="mt-4 min-h-12 w-full rounded-xl bg-accent px-4 text-base font-bold text-on-accent disabled:opacity-60"
       >
-        {starting ? "시작 중…" : `${day.label}요일 T3 기록 시작`}
+        {starting ? "시작 중…" : `${day.label}요일 운동 시작`}
       </button>
-      <p className="mt-2 text-center text-xs text-fg-secondary">T3(FST-7)만 기록합니다. 완전한 nSuns 프로그램이 아닙니다.</p>
+      {missingProfile && <p className="mt-2 text-center text-xs text-warning">이 요일 운동의 설정값이 없어 시작할 수 없습니다.</p>}
       <p className="mt-4 text-center text-xs">
         <Link href="/setup" className="inline-flex min-h-11 items-center text-fg-secondary underline">
           저장된 설정 보기

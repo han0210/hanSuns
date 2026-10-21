@@ -2,14 +2,15 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createInitialSetupState, setupReducer, type SetupAction } from "@/features/setup-prototype/setupModel";
 import { buildInitialSetupInput, exerciseName } from "@/features/setup-prototype/setupPersistence";
 import {
-  buildT3SessionPlan,
+  buildSessionPlan,
+  dayExerciseIds,
   defaultTrainingDay,
   localIsoDate,
   normalizeRestSeconds,
   REST_DEFAULT_SECONDS,
   TRAINING_DAYS,
 } from "@/features/workout/t3SessionPlan";
-import { storageErrorMessage, toSetRecordId, toUiSession } from "@/features/workout/sessionMapper";
+import { sessionScopeOf, storageErrorMessage, toUiSession } from "@/features/workout/sessionMapper";
 import { loadRestSeconds, loadTimer, saveRestSeconds, saveTimer } from "@/features/workout/restTimerStorage";
 import { createInitialState, workoutReducer } from "@/features/workout-prototype/workoutReducer";
 import { saveInitialSetup } from "@/storage/repositories/setupRepository";
@@ -18,7 +19,9 @@ import {
   completeSet,
   completeWorkoutSession,
   getActiveSession,
+  getSessionDetail,
   startWorkoutSession,
+  type SessionDetail,
 } from "@/storage/repositories/workoutRepository";
 import { kg } from "@/domain/types/weight";
 import type { NsunsDatabase } from "@/storage/db";
@@ -27,24 +30,47 @@ import { createTestDatabase, destroyDatabase, expectOk, openSameDatabase } from 
 const MONDAY = new Date(2026, 9, 19, 23, 30); // 2026-10-19(월) 23:30 현지 시각
 const monday = TRAINING_DAYS[0];
 
-describe("T3 전용 세션 계획 — 미확정 템플릿 오사용 방지", () => {
-  it("선택한 요일의 T3 운동 하나만 담고, 세트는 넘기지 않는다 (저장 계층이 FST-7 생성)", () => {
-    const plan = buildT3SessionPlan(monday, MONDAY, 30);
-    expect(plan.exercises).toHaveLength(1);
-    expect(plan.exercises[0]).toMatchObject({ exerciseId: "cable_fly", tier: "T3", templateId: null, restSeconds: 30 });
-    expect(plan.exercises[0].sets).toBeUndefined();
-    expect(plan.exercises.some((e) => e.tier !== "T3")).toBe(false);
+const REST = { T1: 60, T2: 60, T3: 60 } as const;
+/** 이전 버전(STEP 10 Lite)의 T3 전용 세션 계획: 기존 기록 보존 테스트용 */
+const legacyT3Plan = (exerciseId: string) => ({
+  scheduledDay: "MONDAY" as const,
+  workoutDate: "2026-10-18",
+  exercises: [{ exerciseId, tier: "T3" as const, templateId: null, templateVersion: null, restSeconds: 30 }],
+});
+
+describe("전체 세션 계획 — T1(Hybrid T1) → T2(Hybrid T2) → T3(FST-7)", () => {
+  it("요일별 운동 3개를 T1·T2·T3 순서로, T1·T2는 Hybrid 템플릿, T3는 세트 없이", () => {
+    const plan = buildSessionPlan(monday, MONDAY, REST);
+    expect(plan.exercises.map((e) => [e.tier, e.exerciseId, e.templateId])).toEqual([
+      ["T1", "bench_press", "hybrid-t1"],
+      ["T2", "ohp", "hybrid-t2"],
+      ["T3", "cable_fly", null],
+    ]);
+    // 목표 세트는 넘기지 않는다 (저장 계층이 TM 스냅샷으로 계산, 테스트 FIXTURE 미사용)
+    expect(plan.exercises.every((e) => e.sets === undefined)).toBe(true);
+    expect(plan.exercises[0].template?.sets).toHaveLength(9);
+    expect(plan.exercises[1].template?.sets).toHaveLength(8);
+    expect(plan.exercises[2].template).toBeUndefined();
   });
 
-  it("모든 운동일의 계획이 T3만 포함한다", () => {
-    for (const day of TRAINING_DAYS) {
-      expect(buildT3SessionPlan(day, MONDAY, 30).exercises.map((e) => e.tier)).toEqual(["T3"]);
-    }
+  it("요일 구성 (FUNCTIONS 2.1): 목요일 T2는 스모 데드리프트, 토요일 T1은 바벨 로우", () => {
+    expect(TRAINING_DAYS.map((d) => [d.label, ...dayExerciseIds(d)])).toEqual([
+      ["월", "bench_press", "ohp", "cable_fly"],
+      ["화", "deadlift", "front_squat", "leg_curl"],
+      ["목", "squat", "sumo_deadlift", "leg_extension"],
+      ["금", "ohp", "incline_bench_press", "dumbbell_lateral_raise"],
+      ["토", "barbell_row", "barbell_shrug", "lat_pulldown"],
+    ]);
+  });
+
+  it("티어별 휴식 시간을 반영하고 범위 밖 값은 보정", () => {
+    const plan = buildSessionPlan(monday, MONDAY, { T1: 90, T2: 5, T3: 60 });
+    expect(plan.exercises.map((e) => e.restSeconds)).toEqual([90, 15, 60]);
   });
 
   it("운동 날짜는 기기 현지 날짜 (UTC 변환으로 하루 밀리지 않음)", () => {
     expect(localIsoDate(MONDAY)).toBe("2026-10-19");
-    expect(buildT3SessionPlan(monday, MONDAY, 30).workoutDate).toBe("2026-10-19");
+    expect(buildSessionPlan(monday, MONDAY, REST).workoutDate).toBe("2026-10-19");
   });
 
   it("휴식일(수·일)은 월요일을 기본 선택", () => {
@@ -54,8 +80,8 @@ describe("T3 전용 세션 계획 — 미확정 템플릿 오사용 방지", () 
 });
 
 describe("휴식 시간 기본값과 설정", () => {
-  it("기본값: T1·T2 60초, T3 30초", () => {
-    expect(REST_DEFAULT_SECONDS).toEqual({ T1: 60, T2: 60, T3: 30 });
+  it("기본값: T1·T2·T3 모두 60초", () => {
+    expect(REST_DEFAULT_SECONDS).toEqual({ T1: 60, T2: 60, T3: 60 });
   });
 
   it("범위 밖·잘못된 값은 15~600초 정수로 맞추거나 기본값", () => {
@@ -69,12 +95,16 @@ describe("휴식 시간 기본값과 설정", () => {
   it("사용자가 바꾼 휴식 시간을 기기에 저장·복원하고, 저장소가 없거나 실패해도 기본값으로 동작", () => {
     const memory = new Map<string, string>();
     const storage = { getItem: (k: string) => memory.get(k) ?? null, setItem: (k: string, v: string) => void memory.set(k, v), removeItem: (k: string) => void memory.delete(k) };
-    expect(loadRestSeconds("T3", storage)).toBe(30);
+    expect(loadRestSeconds("T3", storage)).toBe(60);
+    expect(loadRestSeconds("T1", storage)).toBe(60);
     saveRestSeconds("T3", 90, storage);
     expect(loadRestSeconds("T3", storage)).toBe(90);
-    expect(loadRestSeconds("T3", null)).toBe(30);
+    // 이전 버전에서 사용자가 바꿔 저장한 값(예: 30초)은 새 기본값보다 우선
+    saveRestSeconds("T1", 30, storage);
+    expect(loadRestSeconds("T1", storage)).toBe(30);
+    expect(loadRestSeconds("T3", null)).toBe(60);
     const broken = { getItem: () => { throw new Error("SecurityError"); }, setItem: () => { throw new Error("QuotaExceeded"); }, removeItem: () => undefined };
-    expect(loadRestSeconds("T3", broken)).toBe(30);
+    expect(loadRestSeconds("T3", broken)).toBe(60);
     expect(() => saveRestSeconds("T3", 90, broken)).not.toThrow();
   });
 
@@ -93,7 +123,7 @@ describe("휴식 시간 기본값과 설정", () => {
   });
 });
 
-describe("Setup 저장 → T3 세션 시작 → 세트 기록 → 복원 → 완료", () => {
+describe("Setup 저장 → 전체 세션 시작 → 세트 기록 → 복원 → 완료", () => {
   let db: NsunsDatabase;
   beforeEach(async () => {
     db = createTestDatabase();
@@ -116,46 +146,93 @@ describe("Setup 저장 → T3 세션 시작 → 세트 기록 → 복원 → 완
     await destroyDatabase(db);
   });
 
-  it("세션 생성 시 세션 시작 당시 작업 중량으로 7×12 세트를 만들고, 화면 상태로 변환한다", async () => {
-    const detail = expectOk(await startWorkoutSession(db, buildT3SessionPlan(monday, MONDAY, 30)));
-    const ui = toUiSession(detail, exerciseName, "월 · T3");
-    expect(ui.status).toBe("IN_PROGRESS");
-    expect(ui.exercises).toHaveLength(1);
-    expect(ui.exercises[0]).toMatchObject({ exerciseName: "케이블 플라이", tier: "T3", restSeconds: 30 });
-    expect(ui.exercises[0].sets).toHaveLength(7);
-    expect(ui.exercises[0].sets.every((s) => s.targetWeight === 15 && s.targetReps === 12 && !s.completed && s.actualWeightDraft === "")).toBe(true);
-    expect(detail.exercises[0].sessionExercise.workingWeightAtSession).toBe(15);
+  const complete = async (detail: SessionDetail, reps?: (set: SessionDetail["exercises"][number]["sets"][number]) => number) => {
+    for (const { sets } of detail.exercises) {
+      for (const set of sets) {
+        expectOk(await completeSet(db, set.setRecordId, { actualWeight: kg(set.targetWeight), actualReps: reps ? reps(set) : set.targetReps }));
+      }
+    }
+  };
+
+  it("월요일 전체 세션: 벤치 T1 9세트(TM 90)·OHP T2 8세트(TM 54)·케이블 플라이 T3 7세트, T1 먼저 펼침", async () => {
+    const detail = expectOk(await startWorkoutSession(db, buildSessionPlan(monday, MONDAY, REST)));
+    const ui = toUiSession(detail, exerciseName, "월");
+    expect(ui.exercises.map((e) => [e.tier, e.exerciseName, e.sets.length, e.restSeconds])).toEqual([
+      ["T1", "벤치프레스", 9, 60],
+      ["T2", "OHP", 8, 60],
+      ["T3", "케이블 플라이", 7, 60],
+    ]);
+    expect(ui.exercises[0].sets.map((s) => s.targetWeight)).toEqual([57.5, 67.5, 77.5, 80, 85, 80, 77.5, 72.5, 67.5]);
+    expect(ui.exercises[0].sets.filter((s) => s.isAmrap).map((s) => s.setNumber)).toEqual([5, 9]);
+    expect(ui.exercises[1].sets.map((s) => s.targetWeight)).toEqual([27.5, 32.5, 37.5, 37.5, 37.5, 37.5, 37.5, 37.5]);
+    expect(createInitialState(ui).expandedExerciseId).toBe(ui.exercises[0].sessionExerciseId);
   });
 
-  it("실제 중량·반복 저장 → 완료 세트 잠금 → 중복 완료 거부 → 새로고침 복원", async () => {
-    const detail = expectOk(await startWorkoutSession(db, buildT3SessionPlan(monday, MONDAY, 30)));
-    const seId = detail.exercises[0].sessionExercise.sessionExerciseId;
-    const first = expectOk(await completeSet(db, toSetRecordId(seId, 1), { actualWeight: kg(15), actualReps: 13 }));
-    expect(first).toMatchObject({ startRestTimer: true, nextSetNumber: 2 });
-    expect(await completeSet(db, toSetRecordId(seId, 1), { actualWeight: kg(17.5), actualReps: 10 })).toMatchObject({ ok: false, error: "SET_ALREADY_COMPLETED" });
+  it("목요일: 스모 T2는 스모 자체 TM(데드 140 × 0.5 × 0.9 = 63)으로 계산", async () => {
+    const thursday = TRAINING_DAYS.find((d) => d.weekday === "THURSDAY")!;
+    const detail = expectOk(await startWorkoutSession(db, buildSessionPlan(thursday, MONDAY, REST)));
+    const sumo = detail.exercises[1];
+    expect(sumo.sessionExercise).toMatchObject({ exerciseId: "sumo_deadlift", tmAtSession: 63 });
+    // 31.5→32.5, 37.8→37.5, 44.1→45
+    expect(sumo.sets.map((s) => s.targetWeight)).toEqual([32.5, 37.5, 45, 45, 45, 45, 45, 45]);
+  });
 
+  it("AMRAP 세트는 목표 이상 실제 반복을 그대로 기록하고, 완료 세트는 잠긴다", async () => {
+    const detail = expectOk(await startWorkoutSession(db, buildSessionPlan(monday, MONDAY, REST)));
+    const amrap = detail.exercises[0].sets[4];
+    const done = expectOk(await completeSet(db, amrap.setRecordId, { actualWeight: kg(85), actualReps: 6 }));
+    expect(done.set).toMatchObject({ isAmrap: true, targetReps: 1, actualReps: 6, completed: true });
+    expect(await completeSet(db, amrap.setRecordId, { actualWeight: kg(85), actualReps: 7 })).toMatchObject({ ok: false, error: "SET_ALREADY_COMPLETED" });
+  });
+
+  it("새로고침(DB 재오픈) 후 T1·T2·T3 기록 복원", async () => {
+    const detail = expectOk(await startWorkoutSession(db, buildSessionPlan(monday, MONDAY, REST)));
+    expectOk(await completeSet(db, detail.exercises[0].sets[0].setRecordId, { actualWeight: kg(57.5), actualReps: 8 }));
+    expectOk(await completeSet(db, detail.exercises[1].sets[0].setRecordId, { actualWeight: kg(27.5), actualReps: 5 }));
     db.close();
     const reopened = openSameDatabase(db);
     const restored = expectOk(await getActiveSession(reopened));
     reopened.close();
     await db.open();
     const ui = toUiSession(restored!, exerciseName, "월");
-    expect(ui.exercises[0].sets[0]).toMatchObject({ completed: true, actualWeight: 15, actualReps: 13, actualWeightDraft: "15", actualRepsDraft: "13" });
-    expect(ui.exercises[0].sets.slice(1).every((s) => !s.completed && s.actualWeight === null)).toBe(true);
+    expect(ui.exercises.map((e) => e.sets.filter((s) => s.completed).length)).toEqual([1, 1, 0]);
+    expect(ui.exercises[0].sets[0]).toMatchObject({ completed: true, actualWeight: 57.5, actualReps: 8 });
   });
 
-  it("미완료 세트가 있으면 완료 거부, 7세트 모두 12회 이상이면 완료 + 다음 작업 중량 증가", async () => {
-    const detail = expectOk(await startWorkoutSession(db, buildT3SessionPlan(monday, MONDAY, 30)));
-    const seId = detail.exercises[0].sessionExercise.sessionExerciseId;
-    for (let n = 1; n <= 6; n += 1) expectOk(await completeSet(db, toSetRecordId(seId, n), { actualWeight: kg(15), actualReps: 12 }));
+  it("24세트 중 하나라도 미완료면 완료 거부, 모두 완료하면 COMPLETED + T3만 증량, T1·T2 TM 불변", async () => {
+    const detail = expectOk(await startWorkoutSession(db, buildSessionPlan(monday, MONDAY, REST)));
+    const last = detail.exercises[2].sets[6];
+    await complete({ ...detail, exercises: detail.exercises.map((e) => ({ ...e, sets: e.sets.filter((s) => s.setRecordId !== last.setRecordId) })) });
     expect(await completeWorkoutSession(db, detail.session.sessionId)).toMatchObject({ ok: false, error: "SESSION_HAS_INCOMPLETE_SETS" });
-    expect(expectOk(await getExerciseProfile(db, "cable_fly"))?.t3WorkingWeight).toBe(15);
-
-    expectOk(await completeSet(db, toSetRecordId(seId, 7), { actualWeight: kg(15), actualReps: 12 }));
+    expectOk(await completeSet(db, last.setRecordId, { actualWeight: kg(15), actualReps: 12 }));
     const done = expectOk(await completeWorkoutSession(db, detail.session.sessionId));
-    expect(done.t3Progressions[0]).toMatchObject({ applied: true, decision: { decision: "INCREASE", nextWorkingWeight: { value: 17.5 } } });
-    expect(done.pendingProgressions).toEqual([]);
-    expect(expectOk(await getActiveSession(db))).toBeNull();
+    expect(done.t3Progressions[0]).toMatchObject({ applied: true, decision: { nextWorkingWeight: { value: 17.5 } } });
+    expect(done.pendingProgressions.map((p) => p.tier)).toEqual(["T1", "T2"]);
+    expect(expectOk(await getExerciseProfile(db, "bench_press"))?.currentTM).toBe(90);
+    expect(expectOk(await getExerciseProfile(db, "ohp"))?.currentTM).toBe(54);
+  });
+
+  it("이전 버전의 완료된 T3 전용 세션은 그대로 남고, 새 전체 세션과 함께 조회된다", async () => {
+    const legacy = expectOk(await startWorkoutSession(db, legacyT3Plan("cable_fly")));
+    await complete(legacy);
+    expectOk(await completeWorkoutSession(db, legacy.session.sessionId));
+    const legacyBefore = expectOk(await getSessionDetail(db, legacy.session.sessionId));
+
+    const full = expectOk(await startWorkoutSession(db, buildSessionPlan(monday, MONDAY, REST)));
+    expect(full.exercises).toHaveLength(3);
+    expect(expectOk(await getSessionDetail(db, legacy.session.sessionId))).toEqual(legacyBefore);
+    expect(legacyBefore!.exercises.map((e) => e.sessionExercise.tier)).toEqual(["T3"]);
+    expect(sessionScopeOf(legacyBefore!)).toBe("T3_ONLY");
+    expect(sessionScopeOf(full)).toBe("FULL");
+  });
+
+  it("진행 중인 T3 전용 세션은 그대로 복원되며 T1·T2가 추가되지 않는다 (새 세션 시작도 거부)", async () => {
+    const legacy = expectOk(await startWorkoutSession(db, legacyT3Plan("cable_fly")));
+    expect(await startWorkoutSession(db, buildSessionPlan(monday, MONDAY, REST))).toMatchObject({ ok: false, error: "ACTIVE_SESSION_EXISTS" });
+    const active = expectOk(await getActiveSession(db));
+    expect(active!.session.sessionId).toBe(legacy.session.sessionId);
+    expect(active!.exercises.map((e) => e.sessionExercise.tier)).toEqual(["T3"]);
+    expect(active!.exercises[0].sessionExercise.restSeconds).toBe(30);
   });
 });
 

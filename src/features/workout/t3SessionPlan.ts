@@ -1,17 +1,20 @@
 /**
- * T3 전용 기록 세션 계획 (STEP 10 Lite).
+ * 하루 운동 세션 계획 (T1·T2·T3).
  *
- * T1·T2는 원본 nSuns 템플릿(세트 수·반복·TM 비율)이 검증되지 않아(U-01·U-02·U-08) 목표 세트를 만들 수 없다.
- * 테스트 FIXTURE나 추측한 비율을 실제 운동에 쓰지 않기 위해, 이번 단계의 실제 기록은 확정 규칙인
- * T3 FST-7(7세트 × 12회, 작업 중량 = 프로필 t3WorkingWeight)만 만든다.
- * 이 세션은 완전한 nSuns 프로그램이 아니다. 화면에도 그렇게 표시한다.
+ * (파일 이름은 STEP 10 Lite의 T3 전용 계획에서 유래했다. 현재는 전체 세션 계획을 만든다.)
+ *
+ * - T1: Hybrid 자체 T1 템플릿(H-20, 9세트), T2: Hybrid 자체 T2 템플릿(H-21, 8세트). 원본 nSuns 공식 템플릿이 아니다.
+ *   목표 중량은 저장 계층이 세션 시작 트랜잭션에서 TM 스냅샷으로 계산한다(roundToIncrement(TM × 비율)).
+ * - T3: FST-7 7세트 × 12회 (작업 중량 = 프로필 t3WorkingWeight). 기존 정책 그대로.
+ * - T1·T2 자동 TM 증량은 하지 않는다(U-04 등 별도 정책).
  */
 import type { Tier, Weekday } from "@/domain/types/model";
-import type { StartSessionInput } from "@/storage/repositories/workoutRepository";
-import type { T3ExerciseId } from "@/features/setup-prototype/setupModel";
+import { HYBRID_T1_TEMPLATE, HYBRID_T2_TEMPLATE, type SetTemplate } from "@/domain/templates/hybridTemplates";
+import type { SessionExercisePlan, StartSessionInput } from "@/storage/repositories/workoutRepository";
+import type { DirectLiftId, EstimatedLiftId, T3ExerciseId } from "@/features/setup-prototype/setupModel";
 
-/** 기본 휴식 시간(초). 사용자 결정(STEP 10): T1·T2 60초, T3 30초. 사용자가 바꿀 수 있다 */
-export const REST_DEFAULT_SECONDS: Record<Tier, number> = { T1: 60, T2: 60, T3: 30 };
+/** 기본 휴식 시간(초). 사용자 결정: T1·T2·T3 모두 60초. 사용자가 바꾼 값이 우선한다 */
+export const REST_DEFAULT_SECONDS: Record<Tier, number> = { T1: 60, T2: 60, T3: 60 };
 export const REST_MIN_SECONDS = 15;
 export const REST_MAX_SECONDS = 600;
 
@@ -22,26 +25,29 @@ export function normalizeRestSeconds(value: unknown, fallback: number): number {
   return Math.min(REST_MAX_SECONDS, Math.max(REST_MIN_SECONDS, Math.round(n)));
 }
 
+type T1T2ExerciseId = DirectLiftId | EstimatedLiftId;
+
 export type TrainingDay = {
   readonly weekday: Weekday;
   readonly label: string;
-  /** 표시 전용. 기록·계산하지 않는다 */
-  readonly t1Name: string;
-  readonly t2Name: string;
+  readonly t1ExerciseId: T1T2ExerciseId;
+  readonly t2ExerciseId: T1T2ExerciseId;
   readonly t3ExerciseId: T3ExerciseId;
 };
 
 /** 주간 일정 (FUNCTIONS 2.1). 수·일은 휴식 */
 export const TRAINING_DAYS: readonly TrainingDay[] = [
-  { weekday: "MONDAY", label: "월", t1Name: "벤치프레스", t2Name: "OHP", t3ExerciseId: "cable_fly" },
-  { weekday: "TUESDAY", label: "화", t1Name: "데드리프트", t2Name: "프론트 스쿼트", t3ExerciseId: "leg_curl" },
-  { weekday: "THURSDAY", label: "목", t1Name: "스쿼트", t2Name: "스모 데드리프트", t3ExerciseId: "leg_extension" },
-  { weekday: "FRIDAY", label: "금", t1Name: "OHP", t2Name: "인클라인 벤치프레스", t3ExerciseId: "dumbbell_lateral_raise" },
-  { weekday: "SATURDAY", label: "토", t1Name: "바벨 로우", t2Name: "슈러그", t3ExerciseId: "lat_pulldown" },
+  { weekday: "MONDAY", label: "월", t1ExerciseId: "bench_press", t2ExerciseId: "ohp", t3ExerciseId: "cable_fly" },
+  { weekday: "TUESDAY", label: "화", t1ExerciseId: "deadlift", t2ExerciseId: "front_squat", t3ExerciseId: "leg_curl" },
+  { weekday: "THURSDAY", label: "목", t1ExerciseId: "squat", t2ExerciseId: "sumo_deadlift", t3ExerciseId: "leg_extension" },
+  { weekday: "FRIDAY", label: "금", t1ExerciseId: "ohp", t2ExerciseId: "incline_bench_press", t3ExerciseId: "dumbbell_lateral_raise" },
+  { weekday: "SATURDAY", label: "토", t1ExerciseId: "barbell_row", t2ExerciseId: "barbell_shrug", t3ExerciseId: "lat_pulldown" },
 ];
 
-/** T1·T2를 기록할 수 없는 이유 (화면 안내용) */
-export const T1_T2_DISABLED_REASON = "원본 nSuns 세트 템플릿 검증 전이라 기록할 수 없습니다 (U-01·U-02·U-08).";
+/** 화면 안내: 템플릿 출처 */
+export const HYBRID_TEMPLATE_NOTICE = "T1·T2는 원본 nSuns에서 착안한 Hybrid 자체 템플릿입니다 (원본 nSuns 공식 템플릿 아님).";
+
+export const TIER_TEMPLATES: Readonly<Record<"T1" | "T2", SetTemplate>> = { T1: HYBRID_T1_TEMPLATE, T2: HYBRID_T2_TEMPLATE };
 
 const WEEKDAYS: readonly Weekday[] = ["SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"];
 
@@ -60,22 +66,28 @@ export function defaultTrainingDay(date: Date): TrainingDay {
   return TRAINING_DAYS.find((day) => day.weekday === today) ?? TRAINING_DAYS[0];
 }
 
+/** 요일의 운동 ID 목록 (T1 → T2 → T3) */
+export const dayExerciseIds = (day: TrainingDay): readonly string[] => [day.t1ExerciseId, day.t2ExerciseId, day.t3ExerciseId];
+
+const templatePlan = (exerciseId: string, tier: "T1" | "T2", restSeconds: number): SessionExercisePlan => {
+  const template = TIER_TEMPLATES[tier];
+  return { exerciseId, tier, templateId: template.templateId, templateVersion: template.templateVersion, restSeconds, template };
+};
+
 /**
- * 선택한 요일의 T3 운동 하나만 담은 세션 계획.
- * sets를 넘기지 않으므로 저장 계층이 FST-7(7×12, 프로필 작업 중량)을 생성한다. T1·T2는 넣지 않는다.
+ * 선택한 요일의 전체 세션 계획: T1(Hybrid T1) → T2(Hybrid T2) → T3(FST-7) 순서.
+ * 세트 목표값은 넘기지 않는다. 저장 계층이 세션 시작 TM 스냅샷으로 계산한다.
+ * @param restSeconds 티어별 휴식 시간 (사용자 설정 우선, 범위 밖이면 보정)
  */
-export function buildT3SessionPlan(day: TrainingDay, date: Date, restSeconds: number): StartSessionInput {
+export function buildSessionPlan(day: TrainingDay, date: Date, restSeconds: Readonly<Record<Tier, number>>): StartSessionInput {
+  const rest = (tier: Tier) => normalizeRestSeconds(restSeconds[tier], REST_DEFAULT_SECONDS[tier]);
   return {
     scheduledDay: day.weekday,
     workoutDate: localIsoDate(date),
     exercises: [
-      {
-        exerciseId: day.t3ExerciseId,
-        tier: "T3",
-        templateId: null,
-        templateVersion: null,
-        restSeconds: normalizeRestSeconds(restSeconds, REST_DEFAULT_SECONDS.T3),
-      },
+      templatePlan(day.t1ExerciseId, "T1", rest("T1")),
+      templatePlan(day.t2ExerciseId, "T2", rest("T2")),
+      { exerciseId: day.t3ExerciseId, tier: "T3", templateId: null, templateVersion: null, restSeconds: rest("T3") },
     ],
   };
 }

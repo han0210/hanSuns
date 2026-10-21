@@ -1,12 +1,12 @@
 import Link from "next/link";
 
-/** 시작 화면: 초기 설정과 운동 기록(STEP 10 Lite) 진입. 저장 없는 디자인 프로토타입 링크는 아래에 둔다 */
+/** 시작 화면: 초기 설정과 운동 기록 진입. 저장 없는 디자인 프로토타입 링크는 아래에 둔다 */
 export default function HomePage() {
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-[480px] flex-col justify-center gap-4 px-4">
       <h1 className="text-2xl font-bold">nSuns Hybrid</h1>
       <p className="text-sm leading-relaxed text-fg-secondary">
-        기록은 이 기기의 브라우저에만 저장됩니다. 현재는 T3(FST-7) 기록만 지원하며, T1·T2는 원본 템플릿 검증 후 추가됩니다.
+        기록은 이 기기의 브라우저에만 저장됩니다. T1·T2는 원본 nSuns에서 착안한 Hybrid 자체 템플릿, T3는 FST-7입니다.
       </p>
       <Link href="/workout" className="flex min-h-12 items-center justify-center rounded-xl bg-accent px-4 font-semibold text-on-accent">
         운동 기록

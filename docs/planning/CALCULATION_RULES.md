@@ -1,11 +1,18 @@
 # nSuns Hybrid — CALCULATION_RULES.md
 
 > **프로젝트:** nSuns Hybrid 5-Day
-> **문서 버전:** v0.13
+> **문서 버전:** v0.14
 > **문서 상태:** Draft — 설계 결정 반영 완료 / U-03·U-12·기록 잠금 및 운동별 리셋(H-14)·Setup 추정 제안(H-15, 4개 비율 승인) 확정 / 계산 상수(템플릿 비율·AMRAP 증량값) 검증 대기
 > **작성일:** 2026-10-20
 > **상위 문서:** `PTS.md`, `PRD.md`, `FUNCTIONS.md`, `TECHSTACK.md`
 > **이전 버전:** `CALCULATION_RULES.v0.1.bak.md` (v0.1 백업)
+
+### v0.13 → v0.14 변경 요약 (Hybrid 자체 T1·T2 템플릿)
+
+- **H-20 Hybrid T1 템플릿**(9세트, 5·9세트 AMRAP), **H-21 Hybrid T2 템플릿**(8세트) 확정. 원본 nSuns에서 착안한 Hybrid MVP 자체 템플릿이며 원본 nSuns 공식 템플릿으로 표시하지 않는다 (5.0·7.0절)
+- 목표 중량 = `roundToIncrement(TM × 세트 비율)`, TM 내부 정밀도 유지(H-03), 운동별 증가 단위·단위(kg/lb) 준수
+- U-01·U-02·U-08(T1·T2 세트 구성)은 Hybrid 자체 템플릿으로 대체되어 MVP 기록을 막지 않는다. T1 AMRAP 증량(U-04·U-06)·T2 증량은 여전히 미구현
+- 기본 휴식: T1·T2·T3 모두 60초 (사용자 변경값 우선)
 
 ### v0.12 → v0.13 변경 요약 (U-18 확정)
 
@@ -164,6 +171,8 @@
 | H-16 | 덤벨 중량은 한 손 기준으로 입력·표시·저장, 양손 합산 없음, kg·lb 공통 (v0.10 확정, 구 U-19) | 4.4절 |
 | H-17 | 하루 세션 COMPLETED는 모든 예정 세트 완료 시에만 허용, 미완료 세션은 증량 판정 없음, 중도 종료는 ABANDONED (v0.12 확정, 구 U-21) | 8.3절 |
 | H-18 | 세션 도중 사용자가 바꾼 T3 작업 중량을 자동 증량보다 우선, 스냅샷·완료 기록 불변 (v0.12 확정, 구 U-22) | 8.3절 |
+| H-20 | Hybrid 자체 T1 템플릿 9세트 (65·75·85·90·95·90·85·80·75%, 8·6·4·2·1+·3·5·7·4+회), 모든 T1 운동 공통 (v0.14) | 5.0절 |
+| H-21 | Hybrid 자체 T2 템플릿 8세트 (50·60·70×6%, 5·5·3·5·7·4·6·8회), 모든 T2 운동 공통 (v0.14) | 7.0절 |
 | H-19 | 스모 데드리프트 초기 추정 1RM = 컨벤셔널 데드리프트 1RM × 0.50, 초기 TM = × 0.90, 사용자 확정·수정 가능 (v0.13 확정, 구 U-18) | 3.6절 |
 
 > **참고:** 원본 nSuns는 T2 보조 운동의 중량을 관련 T1 리프트의 TM으로 계산하는 구조로 알려져 있다. Hybrid는 H-07에 따라 T2 운동마다 독립 TM을 쓰므로, 원본 T2 비율을 그대로 적용해도 결과 중량이 원본과 달라질 수 있다. 이 차이는 의도된 Hybrid 변형이며, 원본 구조 자체는 2.1의 원본 대조 시 함께 확인한다.
@@ -359,6 +368,27 @@ roundToIncrement(weight, increment)
 
 ## 5. T1 템플릿 및 바벨 로우
 
+### 5.0 Hybrid 자체 T1 템플릿 `[Hybrid H-20]` — v0.14
+
+원본 nSuns 프로그램에서 착안한 **nSuns Hybrid MVP 자체 템플릿**이다. 원본 nSuns 공식 템플릿이 아니며, 화면·문서에서 원본 템플릿으로 소개하지 않는다. `templateId: "hybrid-t1"`, `templateVersion: 1`.
+
+| 세트 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 |
+|---|---|---|---|---|---|---|---|---|---|
+| TM 비율 | 65% | 75% | 85% | 90% | 95% | 90% | 85% | 80% | 75% |
+| 목표 반복 | 8 | 6 | 4 | 2 | **1+** | 3 | 5 | 7 | **4+** |
+
+| 항목 | 규칙 |
+|---|---|
+| 적용 범위 | 모든 요일의 T1 (벤치프레스·데드리프트·스쿼트·OHP·바벨 로우) |
+| 목표 중량 | `roundToIncrement(TM × 비율)` — TM은 세션 시작 시점 `currentTM` 스냅샷, 반올림하지 않은 값 |
+| AMRAP | 5세트(1+)·9세트(4+). 목표 반복은 최소 반복이며, 실제 반복은 사용자가 입력한 값을 그대로 기록한다 |
+| 증량 | 이 템플릿에는 자동 TM 증량이 없다. AMRAP 증량(6장, U-04·U-06)은 별도 정책 |
+| 코드 | `src/domain/templates/hybridTemplates.ts` `HYBRID_T1_TEMPLATE`, `calculateTemplateSets()` |
+
+예: 벤치 1RM 100 → TM 90, 증가 단위 2.5kg → 57.5 / 67.5 / 77.5 / 80 / **85** / 80 / 77.5 / 72.5 / **67.5** kg.
+
+아래 5.1~5.3은 원본 템플릿 대조 계획의 기록이다. v0.14부터 MVP는 5.0의 Hybrid 템플릿을 쓰며, 원본 템플릿으로 바꾸려면 별도 결정이 필요하다.
+
 ### 5.1 요일별 T1과 템플릿 매핑
 
 | 요일 | T1 운동 | 적용 템플릿 | 출처 | 상태 |
@@ -397,7 +427,7 @@ T1Set {
 
 ### 5.3 바벨 로우 T1 `[Hybrid H-04]`
 
-**확정:** 바벨 로우는 "일반 5/3/1 벤치형" T1 템플릿을 재사용한다.
+**확정:** 바벨 로우는 "일반 5/3/1 벤치형" T1 템플릿을 재사용한다. (v0.14: 모든 T1이 Hybrid T1 템플릿(H-20)을 쓰므로 바벨 로우도 같은 템플릿을 쓰며, U-02의 "벤치형" 특정은 MVP에 필요하지 않다.)
 
 | 항목 | 규칙 |
 |---|---|
@@ -485,6 +515,25 @@ AmrapProgressionRule {
 
 - 다른 운동의 1RM·TM을 복사하거나 비율로 환산해 쓰지 않는다. 단, 최초 설정의 추천값(3.6절)은 사용자가 확정한 뒤 해당 운동의 자체 1RM이 되므로 이 규칙과 충돌하지 않는다. 운동 교체 시 자동 환산은 여전히 하지 않는다.
 - 선택 운동에 1RM이 없으면 `MISSING_1RM`을 반환하고 입력을 요청한다.
+
+### 7.0 Hybrid 자체 T2 템플릿 `[Hybrid H-21]` — v0.14
+
+원본 nSuns 프로그램에서 착안한 **nSuns Hybrid MVP 자체 템플릿**이다. 원본 nSuns 공식 템플릿이 아니다. `templateId: "hybrid-t2"`, `templateVersion: 1`.
+
+| 세트 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
+|---|---|---|---|---|---|---|---|---|
+| TM 비율 | 50% | 60% | 70% | 70% | 70% | 70% | 70% | 70% |
+| 목표 반복 | 5 | 5 | 3 | 5 | 7 | 4 | 6 | 8 |
+
+| 항목 | 규칙 |
+|---|---|
+| 적용 범위 | 모든 요일의 T2 (OHP·프론트 스쿼트·스모 데드리프트·인클라인 벤치프레스·바벨 슈러그). 운동 유형별 구분(7.2)은 MVP에서 쓰지 않는다 |
+| TM | 해당 운동의 자체 `currentTM` (H-07). 같은 exerciseId를 T1에서도 쓰면 공통 TM (H-13, 예: OHP) |
+| 목표 중량 | `roundToIncrement(TM × 비율)` |
+| AMRAP | 없음 |
+| 증량 | 자동 TM 증량 없음 (7.5절) |
+
+예: OHP 1RM 60 → TM 54 → 27.5 / 32.5 / 37.5 × 6 kg. 스모 TM 63 → 32.5 / 37.5 / 45 × 6 kg.
 
 ### 7.2 운동 유형별 템플릿
 
@@ -904,6 +953,7 @@ T3 증량 판정의 "7세트 모두 완료"(8.3절)는 이 절의 `completed = t
 | `calculateTM` | `trainingMax.ts` | `training-max.test.ts` | CR-TM-01~06 |
 | `estimateInitialOneRM`, `resolveInitialOneRepMaxes` | `initialOneRepMax.ts` | `initial-one-rep-max.test.ts`, `setup-consistency.test.ts` | CR-SU-01, 03~08, 11, 13 |
 | `evaluateFST7Progress` | `fst7Progress.ts` | `fst7-progress.test.ts` | CR-F7-04~12 |
+| `calculateTemplateSets` + `HYBRID_T1_TEMPLATE`·`HYBRID_T2_TEMPLATE` | `src/domain/templates/hybridTemplates.ts` | `tests/unit/templates/hybrid-templates.test.ts`, `tests/unit/storage/template-session.test.ts` | H-20·H-21, 4.2절 반올림 |
 
 함수 계약:
 
@@ -912,7 +962,7 @@ T3 증량 판정의 "7세트 모두 완료"(8.3절)는 이 절의 `completed = t
 - FST-7 유지 사유: `SET_COUNT_MISMATCH`, `SET_INCOMPLETE`, `ACTUAL_WEIGHT_MISSING`, `ACTUAL_REPS_MISSING`, `REPS_BELOW_TARGET`, `WEIGHT_BELOW_TARGET`.
 - 판정 시점(하루 세션 완료)과 증량 중복 방지는 저장 계층이 맡는다.
 
-미구현 (미확정 정책): `calculateT1Sets`, `calculateT2Sets`(스모 포함), `evaluateT1Progress`(U-04), T2 증량(U-08).
+미구현 (미확정 정책): `evaluateT1Progress`(U-04·U-06), T2 증량, `replaceExercise`(U-09).
 
 > 저장·복원(IndexedDB) 테스트는 계산 엔진 범위가 아니므로 TECHSTACK 6장의 통합 테스트에서 다룬다.
 
@@ -940,14 +990,14 @@ T3 증량 판정의 "7세트 모두 완료"(8.3절)는 이 절의 `completed = t
 
 | ID | 항목 | 필요한 결정 | 차단되는 기능 |
 |---|---|---|---|
-| U-01 | 원본 T1 템플릿 데이터와 Hybrid 요일 매핑 | 운동별 세트 수·반복·비율, 요일별 대응 템플릿 | T1 전체 계산 |
-| U-02 | "일반 5/3/1 벤치형"의 정확한 지정 | 원본의 어느 템플릿인지 `templateId` 수준 특정 | 바벨 로우 T1 |
+| U-01 | 원본 T1 템플릿 데이터와 Hybrid 요일 매핑 | **Hybrid 템플릿으로 대체 (v0.14)**: MVP는 H-20 사용. 원본 템플릿 대조는 선택 사항 | — |
+| U-02 | "일반 5/3/1 벤치형"의 정확한 지정 | **Hybrid 템플릿으로 대체 (v0.14)**: 바벨 로우도 H-20 사용 | — |
 | U-03 | 반올림 중간값 처리 | **확정 (v0.3)**: 높은 중량 선택 → H-12, 4.2절 | — |
 | U-04 | AMRAP 증량값 | (a) 구간 경계, (b) 구간별 고정 Δ, (c) lb→kg 변환, (d) 하체·상체·바벨 로우 구분 여부 | T1 자동 증량 |
 | U-05 | 1RM 수정 시 currentTM | 재설정 / 유지 / 사용자 선택 | 1RM 수정 흐름 |
 | U-06 | AMRAP 미입력·실제 중량 미달 처리 | 유지 / 판정 제외 / 기타 | T1 자동 증량 |
 | U-07 | 완료 기록 수정 시 증량 재평가 | **대체됨 (v0.4)**: 완료 기록 수정 불가(H-14) → U-14로 이관 | — |
-| U-08 | T2 유형별 템플릿과 T2 증량 | 유형 분류, 지원 운동, 비율, 증량 규칙 (슈러그 지원 여부 포함) | T2 전체 계산 |
+| U-08 | T2 유형별 템플릿과 T2 증량 | **세트 구성은 Hybrid 템플릿으로 대체 (v0.14, H-21)**. 남은 결정: T2 자동 증량 규칙, 운동 유형별 템플릿 구분 여부 | T2 자동 증량 |
 | U-09 | 진행 중 세션의 T2 운동 변경 시 세트 표시 | 세트 번호·완료 세트 처리 방식 | 세션 중 종목 변경 |
 | U-10 | 최소 중량 하한 | 0kg/빈 바 이하 결과 처리 | 저중량 운동 |
 | U-11 | 비정상적으로 큰 입력 경고 기준 | 경고 기준 | 입력 검증 UX |
@@ -995,8 +1045,8 @@ v0.3 작업(STEP 02)에서 실제 문서를 다시 확인하고 아래와 같이
 | `roundToIncrement()` | **즉시 가능** | 없음 (U-03 확정) |
 | `generateFST7Sets()` | **즉시 가능** | 없음 |
 | `evaluateFST7Progress()` | **즉시 가능** | U-13은 입력 단계 문제로 분리 가능 |
-| `calculateT1Sets()` | 구조만 가능 (FIXTURE) | 운영 활성화에 U-01, U-02 필요 |
+| `calculateT1Sets()` | **구현 (v0.14)** — `calculateTemplateSets(HYBRID_T1_TEMPLATE, …)` | Hybrid 자체 템플릿(H-20) |
 | `evaluateT1Progress()` | 구조만 가능 (FIXTURE) | 운영 활성화에 U-04, U-06 필요 |
-| `calculateT2Sets()` / `replaceExercise()` | 구조만 가능 (FIXTURE) | 운영 활성화에 U-08, U-09 필요 (U-12 확정) |
+| `calculateT2Sets()` / `replaceExercise()` | `calculateT2Sets`는 **구현 (v0.14)** — `calculateTemplateSets(HYBRID_T2_TEMPLATE, …)`. `replaceExercise`는 U-09 필요 | Hybrid 자체 템플릿(H-21) |
 
 **운영 활성화 기준:** 함수가 사용하는 모든 템플릿·규칙이 `status: "verified"`이고, 관련 `it.todo`가 실제 테스트로 전환되어 통과한 상태.
