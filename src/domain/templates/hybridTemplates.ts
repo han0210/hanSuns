@@ -35,7 +35,7 @@ const set = (setNumber: number, intensityRatio: number, targetReps: number, isAm
   isAmrap,
 });
 
-/** H-20: Hybrid T1 (9세트, 5·9세트 AMRAP). 모든 요일의 T1에 같은 템플릿을 쓴다 (바벨 로우 포함) */
+/** H-20: Hybrid T1 (9세트, 5·9세트 AMRAP). 모든 Day의 T1에 같은 템플릿을 쓴다 (바벨 로우 포함) */
 export const HYBRID_T1_TEMPLATE: SetTemplate = {
   templateId: "hybrid-t1",
   templateVersion: 1,
@@ -43,7 +43,7 @@ export const HYBRID_T1_TEMPLATE: SetTemplate = {
   sets: [set(1, 0.65, 8), set(2, 0.75, 6), set(3, 0.85, 4), set(4, 0.9, 2), set(5, 0.95, 1, true), set(6, 0.9, 3), set(7, 0.85, 5), set(8, 0.8, 7), set(9, 0.75, 4, true)],
 };
 
-/** H-21: Hybrid T2 (8세트, AMRAP 없음). 모든 요일의 T2에 같은 템플릿을 쓴다 (스모 데드리프트 포함) */
+/** H-21: Hybrid T2 (8세트, AMRAP 없음). 모든 Day의 T2에 같은 템플릿을 쓴다 (스모 데드리프트 포함) */
 export const HYBRID_T2_TEMPLATE: SetTemplate = {
   templateId: "hybrid-t2",
   templateVersion: 1,

@@ -31,10 +31,10 @@ type LiftInfo = { name: string; usage: string };
 
 /** 사용자가 1RM을 직접 입력하는 4대 운동 */
 export const DIRECT_LIFTS: Record<DirectLiftId, LiftInfo> = {
-  bench_press: { name: "벤치프레스", usage: "월 T1" },
-  deadlift: { name: "데드리프트 (컨벤셔널)", usage: "화 T1" },
-  squat: { name: "백 스쿼트", usage: "목 T1" },
-  ohp: { name: "OHP", usage: "금 T1 · 월 T2 (공통 TM)" },
+  bench_press: { name: "벤치프레스", usage: "Day 1 T1" },
+  deadlift: { name: "데드리프트 (컨벤셔널)", usage: "Day 2 T1" },
+  squat: { name: "백 스쿼트", usage: "Day 3 T1" },
+  ohp: { name: "OHP", usage: "Day 4 T1 · Day 1 T2 (공통 TM)" },
 };
 export const DIRECT_LIFT_IDS = Object.keys(DIRECT_LIFTS) as DirectLiftId[];
 
@@ -48,24 +48,24 @@ export type EstimateRule = LiftInfo & {
 
 /** nSuns Hybrid MVP 초기 1RM 추천 비율 (STEP 07 승인, 스모는 H-19 확정). 원본 nSuns 공식 비율이 아니다. */
 export const ESTIMATE_RULES: Record<EstimatedLiftId, EstimateRule> = {
-  front_squat: { name: "프론트 스쿼트", usage: "화 T2", baseId: "squat", ratio: 0.8, ruleId: "setup-front-squat-v1" },
-  barbell_row: { name: "바벨 로우", usage: "토 T1 (Hybrid)", baseId: "deadlift", ratio: 0.55, ruleId: "setup-barbell-row-v1" },
-  incline_bench_press: { name: "인클라인 벤치프레스", usage: "금 T2", baseId: "bench_press", ratio: 0.85, ruleId: "setup-incline-bench-v1" },
-  barbell_shrug: { name: "바벨 슈러그", usage: "토 T2", baseId: "barbell_row", ratio: 0.5, ruleId: "setup-barbell-shrug-v1" },
-  sumo_deadlift: { name: "스모 데드리프트", usage: "목 T2", baseId: "deadlift", ratio: 0.5, ruleId: "setup-sumo-deadlift-v1" },
+  front_squat: { name: "프론트 스쿼트", usage: "Day 2 T2", baseId: "squat", ratio: 0.8, ruleId: "setup-front-squat-v1" },
+  barbell_row: { name: "바벨 로우", usage: "Day 5 T1 (Hybrid)", baseId: "deadlift", ratio: 0.55, ruleId: "setup-barbell-row-v1" },
+  incline_bench_press: { name: "인클라인 벤치프레스", usage: "Day 4 T2", baseId: "bench_press", ratio: 0.85, ruleId: "setup-incline-bench-v1" },
+  barbell_shrug: { name: "바벨 슈러그", usage: "Day 5 T2", baseId: "barbell_row", ratio: 0.5, ruleId: "setup-barbell-shrug-v1" },
+  sumo_deadlift: { name: "스모 데드리프트", usage: "Day 3 T2", baseId: "deadlift", ratio: 0.5, ruleId: "setup-sumo-deadlift-v1" },
 };
 export const ESTIMATED_LIFT_IDS = Object.keys(ESTIMATE_RULES) as EstimatedLiftId[];
 
 export const T3_EXERCISES: Record<T3ExerciseId, LiftInfo & { note?: string }> = {
-  cable_fly: { name: "케이블 플라이", usage: "월 T3" },
-  leg_curl: { name: "레그 컬", usage: "화 T3" },
-  leg_extension: { name: "레그 익스텐션", usage: "목 T3" },
+  cable_fly: { name: "케이블 플라이", usage: "Day 1 T3" },
+  leg_curl: { name: "레그 컬", usage: "Day 2 T3" },
+  leg_extension: { name: "레그 익스텐션", usage: "Day 3 T3" },
   dumbbell_lateral_raise: {
     name: "덤벨 사이드 레터럴 레이즈",
-    usage: "금 T3",
+    usage: "Day 4 T3",
     note: "한 손 기준 중량으로 입력 (양손 합산하지 않음)",
   },
-  lat_pulldown: { name: "랫풀다운", usage: "토 T3" },
+  lat_pulldown: { name: "랫풀다운", usage: "Day 5 T3" },
 };
 export const T3_IDS = Object.keys(T3_EXERCISES) as T3ExerciseId[];
 

@@ -4,7 +4,8 @@ import { buildInitialSetupInput, exerciseName } from "@/features/setup-prototype
 import {
   buildSessionPlan,
   dayExerciseIds,
-  defaultTrainingDay,
+  dayLabel,
+  nextTrainingDay,
   localIsoDate,
   normalizeRestSeconds,
   REST_DEFAULT_SECONDS,
@@ -19,13 +20,14 @@ import {
   completeSet,
   completeWorkoutSession,
   getActiveSession,
+  getLastCompletedSession,
   getSessionDetail,
   startWorkoutSession,
   type SessionDetail,
 } from "@/storage/repositories/workoutRepository";
 import { kg } from "@/domain/types/weight";
 import type { NsunsDatabase } from "@/storage/db";
-import { createTestDatabase, destroyDatabase, expectOk, openSameDatabase } from "../storage/helpers";
+import { createTestClock, createTestDatabase, destroyDatabase, expectOk, openSameDatabase } from "../storage/helpers";
 
 const MONDAY = new Date(2026, 9, 19, 23, 30); // 2026-10-19(월) 23:30 현지 시각
 const monday = TRAINING_DAYS[0];
@@ -53,13 +55,13 @@ describe("전체 세션 계획 — T1(Hybrid T1) → T2(Hybrid T2) → T3(FST-7)
     expect(plan.exercises[2].template).toBeUndefined();
   });
 
-  it("요일 구성 (FUNCTIONS 2.1): 목요일 T2는 스모 데드리프트, 토요일 T1은 바벨 로우", () => {
+  it("Day 1~5 구성 (FUNCTIONS 2.1): Day 3 T2는 스모 데드리프트, Day 5 T1은 바벨 로우", () => {
     expect(TRAINING_DAYS.map((d) => [d.label, ...dayExerciseIds(d)])).toEqual([
-      ["월", "bench_press", "ohp", "cable_fly"],
-      ["화", "deadlift", "front_squat", "leg_curl"],
-      ["목", "squat", "sumo_deadlift", "leg_extension"],
-      ["금", "ohp", "incline_bench_press", "dumbbell_lateral_raise"],
-      ["토", "barbell_row", "barbell_shrug", "lat_pulldown"],
+      ["Day 1", "bench_press", "ohp", "cable_fly"],
+      ["Day 2", "deadlift", "front_squat", "leg_curl"],
+      ["Day 3", "squat", "sumo_deadlift", "leg_extension"],
+      ["Day 4", "ohp", "incline_bench_press", "dumbbell_lateral_raise"],
+      ["Day 5", "barbell_row", "barbell_shrug", "lat_pulldown"],
     ]);
   });
 
@@ -73,9 +75,21 @@ describe("전체 세션 계획 — T1(Hybrid T1) → T2(Hybrid T2) → T3(FST-7)
     expect(buildSessionPlan(monday, MONDAY, REST).workoutDate).toBe("2026-10-19");
   });
 
-  it("휴식일(수·일)은 월요일을 기본 선택", () => {
-    expect(defaultTrainingDay(new Date(2026, 9, 21)).weekday).toBe("MONDAY"); // 수
-    expect(defaultTrainingDay(new Date(2026, 9, 23)).weekday).toBe("FRIDAY");
+  it("다음 운동일: 마지막으로 완료한 Day의 다음 Day (5 다음은 1), 기록이 없으면 Day 1 — 실제 요일과 무관", () => {
+    expect(nextTrainingDay(null).label).toBe("Day 1");
+    expect(nextTrainingDay("MONDAY").label).toBe("Day 2");
+    expect(nextTrainingDay("TUESDAY").label).toBe("Day 3");
+    expect(nextTrainingDay("THURSDAY").label).toBe("Day 4");
+    expect(nextTrainingDay("FRIDAY").label).toBe("Day 5");
+    expect(nextTrainingDay("SATURDAY").label).toBe("Day 1");
+    // 알 수 없는 값(운동일이 아닌 저장값)은 Day 1
+    expect(nextTrainingDay("SUNDAY").label).toBe("Day 1");
+  });
+
+  it("저장값(scheduledDay) → Day 표시", () => {
+    expect(dayLabel("MONDAY")).toBe("Day 1");
+    expect(dayLabel("SATURDAY")).toBe("Day 5");
+    expect(dayLabel("WEDNESDAY")).toBe("");
   });
 });
 
@@ -210,6 +224,26 @@ describe("Setup 저장 → 전체 세션 시작 → 세트 기록 → 복원 →
     expect(done.pendingProgressions.map((p) => p.tier)).toEqual(["T1", "T2"]);
     expect(expectOk(await getExerciseProfile(db, "bench_press"))?.currentTM).toBe(90);
     expect(expectOk(await getExerciseProfile(db, "ohp"))?.currentTM).toBe(54);
+  });
+
+  it("마지막 완료 세션: 완료 시각이 가장 늦은 COMPLETED 세션 (진행 중 세션 제외, 이전 T3 전용 세션 포함)", async () => {
+    const clock = createTestClock(); // 완료 시각 순서를 결정적으로
+    expect(expectOk(await getLastCompletedSession(db))).toBeNull();
+    const day1 = expectOk(await startWorkoutSession(db, buildSessionPlan(monday, MONDAY, REST), { clock }));
+    await complete(day1);
+    expectOk(await completeWorkoutSession(db, day1.session.sessionId, { clock }));
+    expect(expectOk(await getLastCompletedSession(db))).toMatchObject({ sessionId: day1.session.sessionId, scheduledDay: "MONDAY", status: "COMPLETED" });
+    expect(nextTrainingDay(expectOk(await getLastCompletedSession(db))!.scheduledDay).label).toBe("Day 2");
+
+    // 이전 버전 T3 전용 세션(Day 2)을 나중에 완료 → 다음은 Day 3
+    const legacy = expectOk(await startWorkoutSession(db, { ...legacyT3Plan("leg_curl"), scheduledDay: "TUESDAY" }, { clock }));
+    await complete(legacy);
+    expectOk(await completeWorkoutSession(db, legacy.session.sessionId, { clock }));
+    // 진행 중 세션은 무시
+    expectOk(await startWorkoutSession(db, buildSessionPlan(TRAINING_DAYS[4], MONDAY, REST), { clock }));
+    const last = expectOk(await getLastCompletedSession(db));
+    expect(last?.sessionId).toBe(legacy.session.sessionId);
+    expect(nextTrainingDay(last!.scheduledDay).label).toBe("Day 3");
   });
 
   it("이전 버전의 완료된 T3 전용 세션은 그대로 남고, 새 전체 세션과 함께 조회된다", async () => {

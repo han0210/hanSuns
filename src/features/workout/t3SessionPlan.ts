@@ -27,21 +27,27 @@ export function normalizeRestSeconds(value: unknown, fallback: number): number {
 
 type T1T2ExerciseId = DirectLiftId | EstimatedLiftId;
 
+/**
+ * 운동일 Day 1~5. 실제 요일과 연동하지 않는다(사용자 결정).
+ * weekday는 저장 계층(WorkoutSession.scheduledDay)에 쓰는 내부 키일 뿐이며 화면에는 표시하지 않는다.
+ * 기존 저장 데이터와의 호환을 위해 Day 1=MONDAY, 2=TUESDAY, 3=THURSDAY, 4=FRIDAY, 5=SATURDAY 값을 유지한다.
+ */
 export type TrainingDay = {
   readonly weekday: Weekday;
+  /** 화면 표시 이름 (예: "Day 1") */
   readonly label: string;
   readonly t1ExerciseId: T1T2ExerciseId;
   readonly t2ExerciseId: T1T2ExerciseId;
   readonly t3ExerciseId: T3ExerciseId;
 };
 
-/** 주간 일정 (FUNCTIONS 2.1). 수·일은 휴식 */
+/** 운동일 구성 (FUNCTIONS 2.1). 이 순서대로 Day 1 → Day 5 → Day 1 반복 */
 export const TRAINING_DAYS: readonly TrainingDay[] = [
-  { weekday: "MONDAY", label: "월", t1ExerciseId: "bench_press", t2ExerciseId: "ohp", t3ExerciseId: "cable_fly" },
-  { weekday: "TUESDAY", label: "화", t1ExerciseId: "deadlift", t2ExerciseId: "front_squat", t3ExerciseId: "leg_curl" },
-  { weekday: "THURSDAY", label: "목", t1ExerciseId: "squat", t2ExerciseId: "sumo_deadlift", t3ExerciseId: "leg_extension" },
-  { weekday: "FRIDAY", label: "금", t1ExerciseId: "ohp", t2ExerciseId: "incline_bench_press", t3ExerciseId: "dumbbell_lateral_raise" },
-  { weekday: "SATURDAY", label: "토", t1ExerciseId: "barbell_row", t2ExerciseId: "barbell_shrug", t3ExerciseId: "lat_pulldown" },
+  { weekday: "MONDAY", label: "Day 1", t1ExerciseId: "bench_press", t2ExerciseId: "ohp", t3ExerciseId: "cable_fly" },
+  { weekday: "TUESDAY", label: "Day 2", t1ExerciseId: "deadlift", t2ExerciseId: "front_squat", t3ExerciseId: "leg_curl" },
+  { weekday: "THURSDAY", label: "Day 3", t1ExerciseId: "squat", t2ExerciseId: "sumo_deadlift", t3ExerciseId: "leg_extension" },
+  { weekday: "FRIDAY", label: "Day 4", t1ExerciseId: "ohp", t2ExerciseId: "incline_bench_press", t3ExerciseId: "dumbbell_lateral_raise" },
+  { weekday: "SATURDAY", label: "Day 5", t1ExerciseId: "barbell_row", t2ExerciseId: "barbell_shrug", t3ExerciseId: "lat_pulldown" },
 ];
 
 /** 화면 안내: 템플릿 출처 */
@@ -49,24 +55,26 @@ export const HYBRID_TEMPLATE_NOTICE = "T1·T2는 원본 nSuns에서 착안한 Hy
 
 export const TIER_TEMPLATES: Readonly<Record<"T1" | "T2", SetTemplate>> = { T1: HYBRID_T1_TEMPLATE, T2: HYBRID_T2_TEMPLATE };
 
-const WEEKDAYS: readonly Weekday[] = ["SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"];
-
-/** 기기 현지 시각 기준 요일 */
-export const weekdayOf = (date: Date): Weekday => WEEKDAYS[date.getDay()];
-
 /** 기기 현지 시각 기준 날짜 (YYYY-MM-DD). toISOString은 UTC라 한국 새벽에 전날이 되므로 쓰지 않는다 */
 export function localIsoDate(date: Date): string {
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
-/** 오늘이 운동일이면 그 요일, 휴식일이면 월요일을 기본 선택으로 */
-export function defaultTrainingDay(date: Date): TrainingDay {
-  const today = weekdayOf(date);
-  return TRAINING_DAYS.find((day) => day.weekday === today) ?? TRAINING_DAYS[0];
+/** 저장값(scheduledDay) → 화면 표시 "Day N". 운동일이 아닌 값이면 빈 문자열 */
+export const dayLabel = (scheduledDay: Weekday): string => TRAINING_DAYS.find((d) => d.weekday === scheduledDay)?.label ?? "";
+
+/**
+ * 다음 운동일: 마지막으로 완료한 세션의 다음 Day (Day 5 다음은 Day 1).
+ * 완료 기록이 없거나 알 수 없는 값이면 Day 1. 오늘 날짜·요일은 보지 않는다.
+ * @param lastCompletedDay 마지막 완료 세션의 scheduledDay (없으면 null)
+ */
+export function nextTrainingDay(lastCompletedDay: Weekday | null): TrainingDay {
+  const index = TRAINING_DAYS.findIndex((d) => d.weekday === lastCompletedDay);
+  return index === -1 ? TRAINING_DAYS[0] : TRAINING_DAYS[(index + 1) % TRAINING_DAYS.length];
 }
 
-/** 요일의 운동 ID 목록 (T1 → T2 → T3) */
+/** Day의 운동 ID 목록 (T1 → T2 → T3) */
 export const dayExerciseIds = (day: TrainingDay): readonly string[] => [day.t1ExerciseId, day.t2ExerciseId, day.t3ExerciseId];
 
 const templatePlan = (exerciseId: string, tier: "T1" | "T2", restSeconds: number): SessionExercisePlan => {
@@ -75,7 +83,7 @@ const templatePlan = (exerciseId: string, tier: "T1" | "T2", restSeconds: number
 };
 
 /**
- * 선택한 요일의 전체 세션 계획: T1(Hybrid T1) → T2(Hybrid T2) → T3(FST-7) 순서.
+ * 선택한 Day의 전체 세션 계획: T1(Hybrid T1) → T2(Hybrid T2) → T3(FST-7) 순서.
  * 세트 목표값은 넘기지 않는다. 저장 계층이 세션 시작 TM 스냅샷으로 계산한다.
  * @param restSeconds 티어별 휴식 시간 (사용자 설정 우선, 범위 밖이면 보정)
  */

@@ -339,7 +339,7 @@ function EstimateStep({ state, dispatch, showError, touch }: StepProps) {
           <EstimateCard key={id} id={id} state={state} dispatch={dispatch} showError={showError} touch={touch} />
         ))}
         <li className="rounded-2xl border border-dashed border-line p-4 text-sm text-fg-secondary">
-          <span className="font-semibold text-fg">OHP (월 T2)</span>는 1단계의 OHP와 같은 운동 프로필·TM을 사용합니다.
+          <span className="font-semibold text-fg">OHP (Day 1 T2)</span>는 1단계의 OHP와 같은 운동 프로필·TM을 사용합니다.
         </li>
       </ul>
     </section>
@@ -627,7 +627,7 @@ function SumoUpgradeCard({ state, saving, onSave }: { state: SetupState; saving:
         스모 데드리프트 추가 필요
       </h3>
       <p className="mt-1 text-sm leading-relaxed text-fg-secondary">
-        목요일 T2 스모 데드리프트의 초기 1RM이 새로 필요합니다. 저장된 다른 값과 운동 기록은 바뀌지 않습니다.
+        Day 3 T2 스모 데드리프트의 초기 1RM이 새로 필요합니다. 저장된 다른 값과 운동 기록은 바뀌지 않습니다.
       </p>
       <p id="sumo-upgrade-formula" className="mt-2 text-xs text-fg-secondary">
         추정: 데드리프트 (컨벤셔널) {state.direct.deadlift} kg × {percent(rule.ratio)} ={" "}

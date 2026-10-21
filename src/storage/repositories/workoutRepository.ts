@@ -86,6 +86,18 @@ export function getSessionDetail(db: NsunsDatabase, sessionId: SessionId): Promi
   return runStorage(() => db.transaction("r", [db.workoutSessions, db.sessionExercises, db.setRecords], () => loadSessionDetail(db, sessionId)));
 }
 
+/**
+ * 가장 최근에 완료(COMPLETED)한 세션. 완료 시각(completedAt)이 가장 늦은 것, 같으면 시작 시각이 늦은 것.
+ * 다음 운동일(Day) 기본 선택에 쓴다. 완료 세션이 없으면 null.
+ */
+export function getLastCompletedSession(db: NsunsDatabase): Promise<StorageResult<WorkoutSession | null, never>> {
+  return runStorage(async () => {
+    const completed = await db.workoutSessions.where("status").equals("COMPLETED").toArray();
+    const key = (s: WorkoutSession) => `${s.completedAt ?? ""}|${s.startedAt ?? ""}`;
+    return completed.reduce<WorkoutSession | null>((latest, s) => (latest === null || key(s) > key(latest) ? s : latest), null);
+  });
+}
+
 /** 진행 중(IN_PROGRESS·PAUSED) 세션. 없으면 null */
 export function getActiveSession(db: NsunsDatabase): Promise<StorageResult<SessionDetail | null, never>> {
   return runStorage(() =>

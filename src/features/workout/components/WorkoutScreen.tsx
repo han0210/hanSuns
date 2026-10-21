@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
-import type { Exercise, ExerciseProfile, Tier } from "@/domain/types/model";
+import type { Exercise, ExerciseProfile, Tier, WorkoutSession } from "@/domain/types/model";
 import { calculateTemplateSets } from "@/domain/templates/hybridTemplates";
 import { kg } from "@/domain/types/weight";
 import { formatKg, parsePositiveKg } from "@/lib/weightInput";
@@ -13,6 +13,7 @@ import {
   completeSet,
   completeWorkoutSession,
   getActiveSession,
+  getLastCompletedSession,
   getSessionDetail,
   resetSessionExercise,
   startWorkoutSession,
@@ -30,8 +31,10 @@ import { loadRestSeconds, loadTimer, saveRestSeconds, saveTimer } from "../restT
 import { sessionScopeOf, storageErrorMessage, toSetRecordId, toUiSession } from "../sessionMapper";
 import {
   buildSessionPlan,
-  defaultTrainingDay,
+  dayLabel,
   HYBRID_TEMPLATE_NOTICE,
+  localIsoDate,
+  nextTrainingDay,
   normalizeRestSeconds,
   REST_DEFAULT_SECONDS,
   REST_MAX_SECONDS,
@@ -53,13 +56,15 @@ type Phase =
       profiles: ReadonlyMap<string, ExerciseProfile>;
       exercises: ReadonlyMap<string, Exercise>;
       needsSetupUpgrade: boolean;
+      /** 가장 최근 완료 세션 (다음 운동일 기본 선택용). 없으면 null */
+      lastCompleted: WorkoutSession | null;
     }
   | { kind: "active" };
 
 type DialogState = { kind: "none" } | { kind: "reset"; sessionExerciseId: string } | { kind: "finish" } | { kind: "finished"; outcome: CompleteSessionOutcome };
 
 const dayLabelOf = (detail: SessionDetail) =>
-  `${TRAINING_DAYS.find((d) => d.weekday === detail.session.scheduledDay)?.label ?? ""}요일 · ${
+  `${dayLabel(detail.session.scheduledDay)} · ${
     sessionScopeOf(detail) === "T3_ONLY" ? "T3 전용 (이전 버전 세션)" : "T1·T2·T3"
   } · ${detail.session.workoutDate}`;
 
@@ -96,8 +101,8 @@ export function WorkoutScreen() {
       setPhase({ kind: "unavailable", message: "이 브라우저에서는 기기 저장소(IndexedDB)를 사용할 수 없어 기록을 저장할 수 없습니다." });
       return;
     }
-    const [setup, active] = await Promise.all([getSavedSetup(database), getActiveSession(database)]);
-    if (!setup.ok || !active.ok) {
+    const [setup, active, last] = await Promise.all([getSavedSetup(database), getActiveSession(database), getLastCompletedSession(database)]);
+    if (!setup.ok || !active.ok || !last.ok) {
       setPhase({ kind: "unavailable", message: "저장된 기록을 읽지 못했습니다. 새로고침해 주세요." });
       return;
     }
@@ -118,6 +123,7 @@ export function WorkoutScreen() {
       kind: "start",
       profiles: new Map(setup.value.profiles.map((p) => [p.exerciseId, p])),
       exercises: new Map(setup.value.exercises.map((e) => [e.exerciseId, e])),
+      lastCompleted: last.value,
       needsSetupUpgrade: restoredSetup.kind === "needsUpgrade",
     });
   }, []);
@@ -259,6 +265,7 @@ export function WorkoutScreen() {
       <StartPanel
         profiles={phase.profiles}
         exercises={phase.exercises}
+        lastCompleted={phase.lastCompleted}
         needsSetupUpgrade={phase.needsSetupUpgrade}
         onStarted={async (detail) => {
           const ui = toUiSession(detail, exerciseName, dayLabelOf(detail));
@@ -477,6 +484,7 @@ function Shell({ children }: { children: React.ReactNode }) {
 type StartPanelProps = {
   profiles: ReadonlyMap<string, ExerciseProfile>;
   exercises: ReadonlyMap<string, Exercise>;
+  lastCompleted: WorkoutSession | null;
   /** 기존 설정에 새로 추가된 운동(스모 데드리프트)이 없음 */
   needsSetupUpgrade: boolean;
   onStarted: (detail: SessionDetail) => void | Promise<void>;
@@ -486,11 +494,22 @@ type StartPanelProps = {
 
 const TIERS: readonly Tier[] = ["T1", "T2", "T3"];
 
-/** 운동 시작 패널: 요일 선택 → T1·T2·T3 운동과 기준 중량 확인 → 휴식 시간 → 시작 */
-function StartPanel({ profiles, exercises, needsSetupUpgrade, onStarted, onActiveExists, onProfileChanged }: StartPanelProps) {
+/** "M/D" (기기 현지 날짜) */
+const shortDate = (iso: string | null) => {
+  if (!iso) return "";
+  const [, month, dayOfMonth] = localIsoDate(new Date(iso)).split("-");
+  return `${Number(month)}/${Number(dayOfMonth)}`;
+};
+
+/**
+ * 운동 시작 패널: 운동일(Day) 선택 → T1·T2·T3 운동과 기준 중량 확인 → 휴식 시간 → 시작.
+ * 기본 선택은 마지막으로 완료한 Day의 다음 Day이며(실제 요일과 무관), 사용자가 다른 Day를 고를 수 있다.
+ */
+function StartPanel({ profiles, exercises, lastCompleted, needsSetupUpgrade, onStarted, onActiveExists, onProfileChanged }: StartPanelProps) {
   // 브라우저 전용 싱글턴. 이 패널은 저장소 확인이 끝난 뒤(클라이언트)에만 렌더링된다
   const database = getBrowserDatabase();
-  const [day, setDay] = useState<TrainingDay>(() => defaultTrainingDay(new Date()));
+  const [day, setDay] = useState<TrainingDay>(() => nextTrainingDay(lastCompleted?.scheduledDay ?? null));
+  const suggestedDay = nextTrainingDay(lastCompleted?.scheduledDay ?? null);
   const [rest, setRest] = useState<Record<Tier, number>>(() => ({ T1: loadRestSeconds("T1"), T2: loadRestSeconds("T2"), T3: loadRestSeconds("T3") }));
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
@@ -561,29 +580,46 @@ function StartPanel({ profiles, exercises, needsSetupUpgrade, onStarted, onActiv
 
       {needsSetupUpgrade && (
         <p className="mt-3 rounded-xl border border-warning/40 bg-warning/10 px-3 py-2 text-xs leading-relaxed text-warning">
-          스모 데드리프트 초기 1RM이 아직 없습니다 (목요일 T2).{" "}
+          스모 데드리프트 초기 1RM이 아직 없습니다 (Day 3 T2).{" "}
           <Link href="/setup" className="inline-flex min-h-11 items-center font-semibold underline">
             설정에서 추가하기
           </Link>
         </p>
       )}
 
-      <fieldset className="mt-4">
-        <legend className="text-sm font-semibold">요일</legend>
+      <p className="mt-3 text-sm text-fg-secondary">
+        {lastCompleted ? (
+          <>
+            지난 운동: <span className="font-semibold text-fg">{dayLabel(lastCompleted.scheduledDay) || "—"}</span> ({shortDate(lastCompleted.completedAt)} 완료) · 다음
+            운동: <span className="font-semibold text-accent">{suggestedDay.label}</span>
+          </>
+        ) : (
+          <>
+            첫 운동입니다 · <span className="font-semibold text-accent">{suggestedDay.label}</span>부터 시작하세요
+          </>
+        )}
+      </p>
+
+      <fieldset className="mt-3">
+        <legend className="text-sm font-semibold">운동일</legend>
         <div className="mt-2 grid grid-cols-5 gap-1.5">
           {TRAINING_DAYS.map((d) => (
             <button
               key={d.weekday}
               type="button"
               aria-pressed={d.weekday === day.weekday}
+              aria-label={`${d.label}${d.weekday === suggestedDay.weekday ? " (다음 운동)" : ""}`}
               onClick={() => {
                 setDay(d);
                 setEditing(false);
                 setError(null);
               }}
-              className={`min-h-11 rounded-xl text-sm font-semibold ${d.weekday === day.weekday ? "bg-accent text-on-accent" : "bg-surface text-fg"}`}
+              className={`flex min-h-12 flex-col items-center justify-center rounded-xl leading-tight ${
+                d.weekday === day.weekday ? "bg-accent text-on-accent" : "bg-surface text-fg"
+              }`}
             >
-              {d.label}
+              <span className="text-[10px] font-semibold tracking-wide opacity-80">DAY</span>
+              <span className="text-base font-bold">{d.label.replace("Day ", "")}</span>
             </button>
           ))}
         </div>
@@ -690,9 +726,9 @@ function StartPanel({ profiles, exercises, needsSetupUpgrade, onStarted, onActiv
         disabled={starting || missingProfile || !database}
         className="mt-4 min-h-12 w-full rounded-xl bg-accent px-4 text-base font-bold text-on-accent disabled:opacity-60"
       >
-        {starting ? "시작 중…" : `${day.label}요일 운동 시작`}
+        {starting ? "시작 중…" : `${day.label} 운동 시작`}
       </button>
-      {missingProfile && <p className="mt-2 text-center text-xs text-warning">이 요일 운동의 설정값이 없어 시작할 수 없습니다.</p>}
+      {missingProfile && <p className="mt-2 text-center text-xs text-warning">이 Day 운동의 설정값이 없어 시작할 수 없습니다.</p>}
       <p className="mt-4 text-center text-xs">
         <Link href="/setup" className="inline-flex min-h-11 items-center text-fg-secondary underline">
           저장된 설정 보기

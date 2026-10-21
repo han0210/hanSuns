@@ -1,6 +1,6 @@
 # nSuns Hybrid — DATAMODEL.md
 
-> **버전:** v0.7 (2026-10-21, Hybrid T1·T2 템플릿 세션 / v0.6 스모 데드리프트 프로필 추가(H-19) / v0.5 U-21·U-22 확정 반영, 완료 세트 잠금 강화, displayOrder / v0.4 STEP 09 Dexie 스키마 v1·저장 계층 구현 / v0.3 덤벨 한 손 기준 확정 / v0.2 Exercise·ExerciseProfile 분리, camelCase 확정, DIRECT 의미, 수정 차단 책임)
+> **버전:** v0.8 (2026-10-21, scheduledDay를 Day 1~5 내부 키로 사용 / v0.7 Hybrid T1·T2 템플릿 세션 / v0.6 스모 데드리프트 프로필 추가(H-19) / v0.5 U-21·U-22 확정 반영, 완료 세트 잠금 강화, displayOrder / v0.4 STEP 09 Dexie 스키마 v1·저장 계층 구현 / v0.3 덤벨 한 손 기준 확정 / v0.2 Exercise·ExerciseProfile 분리, camelCase 확정, DIRECT 의미, 수정 차단 책임)
 > **상태:** TypeScript 타입 확정 / Dexie 스키마 v1 구현 (UI 미연동)
 > **코드:** `src/domain/types/model.ts`, `src/domain/types/weight.ts`, `src/storage/db.ts`, `src/storage/repositories/`
 > **상위 문서:** `FUNCTIONS.md` 9·11장, `TECHSTACK.md` 5.4, `CALCULATION_RULES.md` 3·9장
@@ -134,6 +134,7 @@ ID 규칙: `sessionId`·`tmChangeId`는 UUID(`createId()`, HTTP LAN 접속 대�
 
 ## 8. 변경 이력
 
+- v0.8: `WorkoutSession.scheduledDay`는 화면의 Day 1~5를 가리키는 내부 키로 사용한다(MONDAY=Day 1, TUESDAY=Day 2, THURSDAY=Day 3, FRIDAY=Day 4, SATURDAY=Day 5). 실제 요일과 무관하며 타입·스키마·기존 데이터는 바뀌지 않는다
 - v0.7: Hybrid 자체 T1·T2 템플릿 세션 — 타입·Dexie 스키마 변경 없음. T1·T2 SessionExercise는 `templateId: hybrid-t1|hybrid-t2`, `templateVersion: 1`, `tmAtSession`(반올림 없는 스냅샷)을 갖고, SetRecord 목표값은 세션 시작 트랜잭션에서 계산해 고정한다. 이전 T3 전용 세션(운동 1개, T3)은 마이그레이션 없이 그대로 유효하다
 - v0.6: 스모 데드리프트(H-19) 추가 — 타입·스키마 변경 없음. 운동 마스터 `sumo_deadlift`(BARBELL, kg)와 일반 ExerciseProfile(`ESTIMATE_ACCEPTED`/`USER_EDITED`, `estimateRuleId: setup-sumo-deadlift-v1`)로 저장. 기존 설정에는 `addSetupExercises`로 추가
 - v0.5: U-21(모든 세트 완료 시에만 COMPLETED)·U-22(세션 중 사용자 T3 수정 우선, 변경 번호) 확정 반영, 완료 세트 잠금을 "리셋 허가 + 대상 운동 + 4개 필드" 조건으로 강화, `displayOrder`·`t3WorkingWeightRevision`·`workingWeightRevisionAtSession` 추가, 표시 순서·유일 인덱스 검토(6.2절)

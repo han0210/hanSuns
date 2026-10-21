@@ -74,7 +74,7 @@ export function storageErrorMessage(error: string): string {
     case "INVALID_ACTUAL_REPS":
       return "반복 횟수는 0 이상의 정수여야 합니다.";
     case "PROFILE_NOT_FOUND":
-      return "이 요일 운동의 설정값이 없습니다. 초기 설정을 확인해 주세요.";
+      return "이 Day 운동의 설정값이 없습니다. 초기 설정을 확인해 주세요.";
     case "TEMPLATE_CALCULATION_FAILED":
       return "TM이 너무 작아 목표 중량을 계산할 수 없습니다. 설정값을 확인해 주세요.";
     case "SESSION_HAS_INCOMPLETE_SETS":

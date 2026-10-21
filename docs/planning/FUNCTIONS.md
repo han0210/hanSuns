@@ -1,7 +1,7 @@
 # nSuns Hybrid — FUNCTIONS.md
 
 > **프로젝트:** nSuns Hybrid 5-Day
-> **버전:** v1.14 (2026-10-21, Hybrid 자체 T1·T2 템플릿·전체 세션 기록, 휴식 기본 60초 / v1.13 스모 데드리프트 초기 추정 확정(U-18 → H-19) / v1.12 휴식 기본값 T1·T2 60초, STEP 10 Lite 화면 연동 / v1.11 세션 완료 조건(U-21)·세션 중 T3 수정 우선(U-22) 확정, 표시 순서 / v1.10 STEP 09 로컬 저장 계층 구현 반영 / v1.9 덤벨 한 손 기준 확정(U-19) / v1.8 Exercise·ExerciseProfile 분리, camelCase 확정, DIRECT 의미 명시, `CALCULATION_RULES.md` v0.14 기준)
+> **버전:** v1.15 (2026-10-21, 운동일 Day 1~5 표시·다음 운동일 자동 선택 / v1.14 Hybrid 자체 T1·T2 템플릿·전체 세션 기록, 휴식 기본 60초 / v1.13 스모 데드리프트 초기 추정 확정(U-18 → H-19) / v1.12 휴식 기본값 T1·T2 60초, STEP 10 Lite 화면 연동 / v1.11 세션 완료 조건(U-21)·세션 중 T3 수정 우선(U-22) 확정, 표시 순서 / v1.10 STEP 09 로컬 저장 계층 구현 반영 / v1.9 덤벨 한 손 기준 확정(U-19) / v1.8 Exercise·ExerciseProfile 분리, camelCase 확정, DIRECT 의미 명시, `CALCULATION_RULES.md` v0.14 기준)
 > **상태:** 기능 명세 초안 / 계산 템플릿 검증 대기
 > **기준 문서:** `docs/planning/PTS.md`, `docs/planning/PRD.md`
 > **목표:** 무료 모바일 웹 기반 운동 프로그램 관리 서비스
@@ -51,6 +51,10 @@ nSuns Hybrid는 근력 훈련 프로그램 nSuns와 FST-7을 결합한 5일 운�
 | 금 | OHP | 인클라인 벤치프레스 | 덤벨 사이드 레터럴 레이즈 |
 | 토 | 바벨 로우 | 슈러그 | 랫풀다운 |
 | 일 | 휴식 | — | — |
+
+**운동일 표시 (v1.15, 사용자 결정):** 앱 화면은 요일 대신 **Day 1~5**로 표시하고 실제 요일과 연동하지 않는다. Day 1=월, Day 2=화, Day 3=목, Day 4=금, Day 5=토 구성이며, 저장값(`WorkoutSession.scheduledDay`)은 기존 데이터 호환을 위해 MONDAY~SATURDAY 키를 그대로 쓴다.
+
+**다음 운동일:** 운동 시작 화면은 마지막으로 완료(COMPLETED)한 세션의 다음 Day를 기본 선택한다(Day 5 다음은 Day 1). 완료 기록이 없으면 Day 1. 오늘 날짜·요일은 보지 않으며, 사용자는 다른 Day를 직접 고를 수 있다. 이전 버전의 T3 전용 세션도 완료 세션으로 계산한다.
 
 ### 2.2 프로그램 운영
 
@@ -575,6 +579,7 @@ Dexie + IndexedDB로 구현했다(`src/storage/`). UI는 아직 연결하지 않
 | `getExerciseProfile()` / `updateT3WorkingWeight()` | 프로필 조회, T3 작업 중량 직접 수정 (변경 번호 +1) | `PROFILE_NOT_FOUND`, `UNIT_MISMATCH` |
 | `applyTMChange()` / `listTMChanges()` | 계산된 TM 변경을 이력과 함께 기록, 이력 조회 | `SESSION_NOT_COMPLETED`, `DUPLICATE_PROGRESSION` |
 | `startWorkoutSession()` | 하루 세션 시작(IN_PROGRESS)과 스냅샷 고정, 계획 순서대로 `displayOrder` 저장, T3 FST-7 세트 생성 | `ACTIVE_SESSION_EXISTS`, `MISSING_SNAPSHOT_VALUE`, `INVALID_SESSION_PLAN` |
+| `getLastCompletedSession()` | 완료 시각이 가장 늦은 COMPLETED 세션 (다음 운동일 기본 선택, v1.15) | — |
 | `getActiveSession()` / `getSessionDetail()` | 새로고침·재시작 후 진행 기록 복원 (12.1의 `restoreWorkoutSession()` 역할). 운동은 `displayOrder` 순 | — |
 | `updateSetDraft()` | 미완료 세트의 입력 중 값 저장 | `SET_LOCKED`, `SESSION_NOT_EDITABLE`, `INVALID_ACTUAL_*` |
 | `completeSet()` | 세트 완료 트랜잭션, 휴식 타이머 시작 신호 반환 | `SET_ALREADY_COMPLETED`, `SESSION_NOT_EDITABLE`, `INVALID_ACTUAL_*` |
@@ -597,7 +602,7 @@ Dexie + IndexedDB로 구현했다(`src/storage/`). UI는 아직 연결하지 않
 | 경로 | 동작 |
 |---|---|
 | `/setup` | 4단계 Setup 입력 → 확정 시 `saveInitialSetup`. 저장 성공 후에만 완료 화면. 실패 시 입력 유지·재시도. 저장된 설정이 있으면 읽기 전용으로 복원(덮어쓰기 금지, U-05) |
-| `/workout` | 저장된 설정 확인 → 진행 중 세션이 있으면 `getActiveSession`으로 복원, 없으면 운동 시작 패널(요일, T1·T2 TM과 목표 범위, T3 작업 중량, 티어별 휴식 시간) |
+| `/workout` | 저장된 설정 확인 → 진행 중 세션이 있으면 `getActiveSession`으로 복원, 없으면 운동 시작 패널(Day 1~5 — 지난 운동의 다음 Day 기본 선택, T1·T2 TM과 목표 범위, T3 작업 중량, 티어별 휴식 시간) |
 | `/prototype/*` | 저장하지 않는 디자인 Mock (기존 유지) |
 
 - **전체 세션 (v1.14):** 선택한 요일의 T1(Hybrid T1, 9세트) → T2(Hybrid T2, 8세트) → T3(FST-7, 7세트), 총 24세트. 세션 계획에는 템플릿만 넘기고, 저장 계층(`startWorkoutSession`)이 같은 트랜잭션에서 TM 스냅샷으로 목표 중량을 계산한다. 화면은 T1을 먼저 펼치고 운동 간 자유롭게 전환한다. 화면에 "Hybrid 자체 템플릿 (원본 nSuns 공식 템플릿 아님)"을 표시한다.
