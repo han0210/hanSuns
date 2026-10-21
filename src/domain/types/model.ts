@@ -8,7 +8,8 @@
  * - readonly는 컴파일 시점 제약일 뿐이다. 실제 데이터 수정 차단(완료 세트 잠금 등)은
  *   STEP 09 서비스 계층과 Dexie 트랜잭션에서 검증한다.
  * - 중량 숫자는 각 엔티티의 weightUnit 단위다. 단위가 다른 값끼리 섞어 계산하지 않는다.
- * - 미확정 정책(덤벨 표기 기준, lb 지원 범위, 완료·중도 종료 세션 리셋 등)은 타입으로 확정하지 않는다.
+ * - 덤벨 운동(equipment: DUMBBELL)의 모든 중량 값은 한 손 기준이다 (U-19 확정, 양손 합산 없음, kg·lb 공통).
+ * - 미확정 정책(lb 지원 범위, 완료·중도 종료 세션 리셋 등)은 타입으로 확정하지 않는다.
  *   docs/architecture/DATAMODEL.md 참고.
  */
 
@@ -46,7 +47,7 @@ export type EquipmentType = "BARBELL" | "DUMBBELL" | "MACHINE" | "CABLE";
 
 /**
  * 운동 마스터. 운동 이름·장비·중량 단위·증가 단위처럼 사용자 기록과 무관한 정보를 담는다.
- * 덤벨 표기 기준(한 손/양손 합계)은 미확정(U-19)이라 필드를 두지 않는다.
+ * 덤벨은 모든 운동에서 한 손 기준(U-19 확정)이므로 운동별 표기 기준 필드를 두지 않는다.
  */
 export type Exercise = {
   readonly exerciseId: ExerciseId;

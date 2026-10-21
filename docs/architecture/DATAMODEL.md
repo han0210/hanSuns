@@ -1,6 +1,6 @@
 # nSuns Hybrid — DATAMODEL.md
 
-> **버전:** v0.2 (2026-10-21, STEP 08-B 검토 반영 — Exercise·ExerciseProfile 분리, camelCase 확정, DIRECT 의미, 수정 차단 책임)
+> **버전:** v0.3 (2026-10-21, 덤벨 한 손 기준 확정 / v0.2 Exercise·ExerciseProfile 분리, camelCase 확정, DIRECT 의미, 수정 차단 책임)
 > **상태:** TypeScript 타입 확정 / Dexie 스키마 미구현
 > **코드:** `src/domain/types/model.ts`, `src/domain/types/weight.ts`
 > **상위 문서:** `FUNCTIONS.md` 9·11장, `TECHSTACK.md` 5.4, `CALCULATION_RULES.md` 3·9장
@@ -18,6 +18,7 @@ Dexie(IndexedDB) 연동 전에 저장할 엔티티의 형태를 TypeScript 타�
 | 직렬화 | 모든 엔티티는 JSON 직렬화 가능한 평범한 객체. 날짜는 ISO 8601 문자열 |
 | 필드 이름 | **camelCase로 확정** (TypeScript 타입과 Dexie 저장 모델 모두). snake_case 필드를 만들지 않는다 |
 | 단위 | 중량 숫자는 엔티티의 `weightUnit`(kg / lb) 기준. 단위 간 자동 변환 없음. 다른 단위끼리 계산하면 `UNIT_MISMATCH` |
+| 덤벨 중량 | `equipment: "DUMBBELL"`인 운동의 모든 중량 값(1RM·TM·작업 중량·증가 단위·목표·실제 중량)은 **한 손 기준**이다. 양손 합산 값을 저장하지 않는다. kg·lb 공통 (U-19 확정, CALCULATION_RULES H-16) |
 | 불변성 | 모든 필드 `readonly`. 변경은 새 객체로 만든다 (컴파일 시점 제약, 5장 참고) |
 | 완료 세트 | `CompletedSetRecord`는 실제 중량·반복·완료 시각이 반드시 있다 |
 | 미확정 정책 | 타입으로 강제 확정하지 않는다 (7장) |
@@ -83,7 +84,6 @@ SessionExercise.exerciseId → Exercise.exerciseId / ExerciseProfile.exerciseId
 
 | 항목 | 현재 타입 처리 | 관련 |
 |---|---|---|
-| 덤벨 중량 표기 기준 (한 손 / 양손 합계) | 필드 없음 | U-19 |
 | lb 단위 지원 범위·기본 증가 단위 | `WeightUnit`에 `lb`는 있으나 kg↔lb 변환 없음 | U-20 |
 | 원본 T1/T2 템플릿, 스모 데드리프트 기준 TM | `templateId`·`templateVersion`이 null 허용 | U-01, U-02, U-08, U-18 |
 | 완료·중도 종료 세션의 리셋 | 상태 값만 정의, 허용 규칙은 코드에 없음 | U-14, U-15 |
@@ -93,5 +93,6 @@ SessionExercise.exerciseId → Exercise.exerciseId / ExerciseProfile.exerciseId
 
 ## 8. 변경 이력
 
+- v0.3: 덤벨 중량 한 손 기준 확정 (U-19 RESOLVED). 모든 덤벨 운동 공통 규칙이라 운동별 표기 필드를 두지 않음
 - v0.2: Exercise·ExerciseProfile 분리, camelCase 확정 (FUNCTIONS 11장 예시 갱신), DIRECT 의미 명시, 수정 차단 책임(5장) 추가
 - v0.1: STEP 08-B 최초 작성

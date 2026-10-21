@@ -62,7 +62,7 @@ export const T3_EXERCISES: Record<T3ExerciseId, LiftInfo & { note?: string }> = 
   dumbbell_lateral_raise: {
     name: "덤벨 사이드 레터럴 레이즈",
     usage: "금 T3",
-    note: "한 손 / 양손 합계 표기 기준 미확정 — 실제 사용하는 기준으로 입력",
+    note: "한 손 기준 중량으로 입력 (양손 합산하지 않음)",
   },
   lat_pulldown: { name: "랫풀다운", usage: "토 T3" },
 };

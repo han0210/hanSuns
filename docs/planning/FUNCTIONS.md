@@ -1,7 +1,7 @@
 # nSuns Hybrid — FUNCTIONS.md
 
 > **프로젝트:** nSuns Hybrid 5-Day
-> **버전:** v1.8 (2026-10-21, Exercise·ExerciseProfile 분리, camelCase 확정, DIRECT 의미 명시 / v1.7 데이터 모델 타입·계산 함수 구현, `CALCULATION_RULES.md` v0.9 기준)
+> **버전:** v1.9 (2026-10-21, 덤벨 한 손 기준 확정(U-19) / v1.8 Exercise·ExerciseProfile 분리, camelCase 확정, DIRECT 의미 명시, `CALCULATION_RULES.md` v0.10 기준)
 > **상태:** 기능 명세 초안 / 계산 템플릿 검증 대기
 > **기준 문서:** `docs/planning/PTS.md`, `docs/planning/PRD.md`
 > **목표:** 무료 모바일 웹 기반 운동 프로그램 관리 서비스
@@ -353,7 +353,7 @@ T3는 1RM 대신 작업 중량을 입력한다.
 
 - 증량 단위는 0보다 커야 한다.
 - 중량 단위 변경 시 목표 중량을 다시 계산한다.
-- 덤벨은 한 손 기준인지 총중량인지 명확하게 표시한다.
+- 덤벨 운동 중량은 kg·lb 모두 **한 손 기준**으로 입력·표시·저장하며 양손 중량을 합산하지 않는다. 모든 덤벨 운동에 동일하게 적용한다 (U-19 확정, CALCULATION_RULES H-16). 화면에는 "한 손 기준"임을 표시한다.
 - 머신의 중량 표기는 실제 장비와 다를 수 있음을 안내한다.
 
 ---
@@ -561,7 +561,7 @@ MVP는 회원가입 없이 브라우저에 데이터를 저장한다.
 }
 ```
 
-덤벨 표기 기준(한 손 / 양손 합계, 구 `weight_display_mode`)은 미확정(U-19)이라 필드를 두지 않는다.
+덤벨 중량은 모든 덤벨 운동에서 한 손 기준으로 확정(U-19)되었으므로, 운동별 표기 기준 필드(구 `weight_display_mode`)를 두지 않는다. `equipment: "DUMBBELL"`인 운동의 모든 중량 값은 한 손 기준이다.
 
 ### 11.2 ExerciseProfile (사용자 기준 중량)
 

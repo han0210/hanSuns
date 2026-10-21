@@ -103,6 +103,19 @@ describe("데이터 모델", () => {
     expect(Object.keys(profile)).not.toContain("increment");
   });
 
+  it("덤벨 운동도 같은 Exercise 구조를 쓰고 표기 기준 필드가 없다 (U-19: 모든 값은 한 손 기준)", () => {
+    const dumbbell: Exercise = {
+      exerciseId: "dumbbell_lateral_raise",
+      name: "덤벨 사이드 레터럴 레이즈",
+      equipment: "DUMBBELL",
+      weightUnit: "kg",
+      increment: 1,
+      updatedAt: "2026-10-21T00:00:00.000Z",
+    };
+    expect(Object.keys(dumbbell).sort()).toEqual(Object.keys(exercise).sort());
+    expect(Object.keys(dumbbell)).not.toContain("weightDisplayMode");
+  });
+
   it("필드 이름은 camelCase다", () => {
     for (const entity of [exercise, profile, session, sessionExercise, incomplete, completed, tmChange]) {
       for (const key of Object.keys(entity)) expect(key).toMatch(/^[a-z][A-Za-z0-9]*$/);
