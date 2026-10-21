@@ -25,6 +25,10 @@ type ExerciseAccordionProps = {
   onManualTargetChange: (setNumber: number, value: number | null) => void;
   onCompleteSet: (setNumber: number) => void;
   onRequestReset: () => void;
+  /** 세트 데이터 출처 배지. 기본은 Mock 표시 (프로토타입) */
+  dataLabel?: string;
+  /** 세트 완료 전 목표 중량 수정 허용 여부. 기본 true (프로토타입) */
+  allowTargetEdit?: boolean;
 };
 
 /**
@@ -43,6 +47,8 @@ export function ExerciseAccordion({
   onManualTargetChange,
   onCompleteSet,
   onRequestReset,
+  dataLabel = `${MOCK_LABEL} 세트·중량`,
+  allowTargetEdit = true,
 }: ExerciseAccordionProps) {
   const [lockNotice, setLockNotice] = useState<string | null>(null);
 
@@ -133,9 +139,7 @@ export function ExerciseAccordion({
           </span>
           <span aria-hidden="true">·</span>
           <span>휴식 {exercise.restSeconds}초</span>
-          <span className="rounded border border-warning/50 px-1 text-[10px] font-bold text-warning">
-            {MOCK_LABEL} 세트·중량
-          </span>
+          <span className="rounded border border-warning/50 px-1 text-[10px] font-bold text-warning">{dataLabel}</span>
           {exercise.resetCount > 0 && <span>· 리셋 {exercise.resetCount}회</span>}
         </div>
 
@@ -184,6 +188,7 @@ export function ExerciseAccordion({
                   idPrefix={exercise.sessionExerciseId}
                   isCurrent={currentSetNumber === set.setNumber}
                   editable={canEditSet(sessionStatus, set)}
+                  allowTargetEdit={allowTargetEdit}
                   saving={savingKeys.includes(key)}
                   errors={errors[key]}
                   onDraftChange={(field, value) => onDraftChange(set.setNumber, field, value)}

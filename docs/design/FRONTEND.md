@@ -1,7 +1,7 @@
 # nSuns Hybrid — FRONTEND.md
 
 > **프로젝트:** nSuns Hybrid 5-Day
-> **버전:** v0.3 (2026-10-21, Mobile First 요구사항·QA 체크리스트 반영 / v0.2 Setup 화면 명세 연결)
+> **버전:** v0.4 (2026-10-21, 휴식 기본값 T1·T2 60초 / v0.3 Mobile First 요구사항·QA 체크리스트 반영 / v0.2 Setup 화면 명세 연결)
 > **상태:** Frontend 설계 초안
 > **경로:** `docs/design/FRONTEND.md`
 > **디자인 기준:** `docs/design/BASE.md`
@@ -235,8 +235,8 @@ COMPLETED 및 ABANDONED 세션의 리셋은 U-14/U-15에 따른다.
 
 기본 시간:
 
-- T1: 180초
-- T2: 120초
+- T1: 60초
+- T2: 60초
 - T3: 30초
 
 주요 동작:

@@ -1,8 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useReducer, useState, type Dispatch, type ReactNode } from "react";
+import { useEffect, useReducer, useState, type Dispatch, type ReactNode } from "react";
 import { formatKg, parsePositiveKg } from "@/lib/weightInput";
+import { getBrowserDatabase } from "@/storage/db";
+import { getSavedSetup, saveInitialSetup } from "@/storage/repositories/setupRepository";
+import { confirmSetup, restoreSetupState, SETUP_EQUIPMENT } from "../setupPersistence";
 import {
   createInitialSetupState,
   DIRECT_LIFT_IDS,
@@ -44,15 +47,92 @@ const SOURCE_LABEL: Record<EstimatedEntry["source"], string> = {
 
 const percent = (ratio: number) => `${Math.round(ratio * 100)}%`;
 
+/** 저장 모드의 저장소 상태 */
+type StoreStatus =
+  | { kind: "loading" }
+  | { kind: "ready" }
+  | { kind: "unavailable"; message: string }
+  | { kind: "saving" }
+  | { kind: "error"; message: string };
+
 /**
- * 최초 설정(Setup) 프로토타입.
+ * 최초 설정(Setup) 화면.
  * 1) 4대 운동 1RM 직접 입력 → 2) 나머지 T1/T2 추정값 검토·수정 → 3) T3 작업 중량 → 4) 확인
- * 저장 계층과 연결하지 않으며, 값은 이 화면 안에서만 유지된다.
+ *
+ * @param persistent true(/setup): 확정 시 IndexedDB에 저장하고, 저장된 설정이 있으면 복원해 읽기 전용으로 보여준다.
+ *                   false(/prototype/setup): 저장하지 않는 Mock 프로토타입.
  */
-export function SetupPrototype() {
+export function SetupPrototype({ persistent = false }: { persistent?: boolean }) {
   const [state, dispatch] = useReducer(setupReducer, undefined, createInitialSetupState);
   const [touched, setTouched] = useState<Set<string>>(() => new Set());
   const [attempted, setAttempted] = useState<Set<SetupStep>>(() => new Set());
+  const [store, setStore] = useState<StoreStatus>(() => (persistent ? { kind: "loading" } : { kind: "ready" }));
+
+  // 저장된 설정 복원 (브라우저에서만 실행: 서버 렌더링 중에는 IndexedDB에 접근하지 않는다)
+  useEffect(() => {
+    if (!persistent) return;
+    let cancelled = false;
+    void (async () => {
+      const db = getBrowserDatabase();
+      if (!db) {
+        if (!cancelled) setStore({ kind: "unavailable", message: "이 브라우저에서는 기기 저장소(IndexedDB)를 사용할 수 없습니다." });
+        return;
+      }
+      const loaded = await getSavedSetup(db);
+      if (cancelled) return;
+      if (!loaded.ok) {
+        setStore({ kind: "unavailable", message: "저장된 설정을 읽지 못했습니다. 새로고침해 주세요." });
+        return;
+      }
+      const restored = restoreSetupState(loaded.value);
+      if (restored.kind === "complete") dispatch({ type: "RESTORE", state: restored.state });
+      if (restored.kind === "partial") {
+        setStore({ kind: "unavailable", message: `저장된 설정이 일부 누락되었습니다 (${restored.missing.join(", ")}).` });
+        return;
+      }
+      setStore({ kind: "ready" });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [persistent]);
+
+  /** '이대로 확정': 저장 모드는 저장 성공 후에만 완료 화면으로 넘어간다 */
+  async function handleComplete() {
+    if (!persistent) {
+      dispatch({ type: "COMPLETE" });
+      return;
+    }
+    const db = getBrowserDatabase();
+    if (!db || store.kind === "saving") return;
+    setStore({ kind: "saving" });
+    const result = await confirmSetup(setupReducer(state, { type: "COMPLETE" }), (input) => saveInitialSetup(db, input));
+    if (result.ok) {
+      dispatch({ type: "RESTORE", state: result.state });
+      setStore({ kind: "ready" });
+      window.scrollTo({ top: 0 });
+      return;
+    }
+    if (result.alreadySaved) {
+      // 다른 탭에서 먼저 저장한 경우: 저장된 값을 보여준다 (덮어쓰지 않음)
+      const loaded = await getSavedSetup(db);
+      const restored = loaded.ok ? restoreSetupState(loaded.value) : null;
+      if (restored?.kind === "complete") dispatch({ type: "RESTORE", state: restored.state });
+    }
+    setStore({ kind: "error", message: result.message });
+  }
+
+  if (persistent && (store.kind === "loading" || store.kind === "unavailable")) {
+    return (
+      <div className="mx-auto w-full max-w-[480px] px-4 pt-4">
+        <p className="text-xs font-semibold tracking-[0.12em] text-fg-secondary">NSUNS HYBRID · SETUP</p>
+        <h1 className="text-2xl font-bold">초기 설정</h1>
+        <p role={store.kind === "loading" ? "status" : "alert"} className="mt-4 rounded-xl bg-surface px-4 py-3 text-sm text-fg-secondary">
+          {store.kind === "loading" ? "저장된 설정을 불러오는 중…" : store.message}
+        </p>
+      </div>
+    );
+  }
 
   const showError = (fieldId: string) => touched.has(fieldId) || attempted.has(state.step);
   const touch = (fieldId: string) => setTouched((prev) => new Set(prev).add(fieldId));
@@ -81,10 +161,17 @@ export function SetupPrototype() {
         <h1 className="text-2xl font-bold">초기 설정</h1>
       </header>
 
-      <p className="mt-3 rounded-xl border border-warning/40 bg-warning/10 px-3 py-2 text-xs leading-relaxed text-warning">
-        <strong className="font-bold">MOCK 프로토타입</strong> · 입력값은 저장되지 않습니다. 추정 1RM은 초기 설정을 돕는
-        추천값이며 실제 측정값이나 원본 nSuns 공식이 아닙니다.
-      </p>
+      {persistent ? (
+        <p className="mt-3 rounded-xl border border-line bg-surface px-3 py-2 text-xs leading-relaxed text-fg-secondary">
+          설정은 <strong className="text-fg">이 기기의 브라우저</strong>에만 저장됩니다. 추정 1RM은 초기 설정을 돕는 추천값이며 실제
+          측정값이나 원본 nSuns 공식이 아닙니다.
+        </p>
+      ) : (
+        <p className="mt-3 rounded-xl border border-warning/40 bg-warning/10 px-3 py-2 text-xs leading-relaxed text-warning">
+          <strong className="font-bold">MOCK 프로토타입</strong> · 입력값은 저장되지 않습니다. 추정 1RM은 초기 설정을 돕는
+          추천값이며 실제 측정값이나 원본 nSuns 공식이 아닙니다.
+        </p>
+      )}
 
       <ol className="mt-4 grid grid-cols-4 gap-1" aria-label="설정 단계">
         {([1, 2, 3, 4] as SetupStep[]).map((step) => {
@@ -109,7 +196,15 @@ export function SetupPrototype() {
         {state.step === 1 && <DirectStep state={state} dispatch={dispatch} showError={showError} touch={touch} />}
         {state.step === 2 && <EstimateStep state={state} dispatch={dispatch} showError={showError} touch={touch} />}
         {state.step === 3 && <T3Step state={state} dispatch={dispatch} showError={showError} touch={touch} />}
-        {state.step === 4 && <ReviewStep state={state} onComplete={() => dispatch({ type: "COMPLETE" })} />}
+        {state.step === 4 && (
+          <ReviewStep
+            state={state}
+            persistent={persistent}
+            saving={store.kind === "saving"}
+            saveError={store.kind === "error" ? store.message : null}
+            onComplete={() => void handleComplete()}
+          />
+        )}
       </main>
 
       {!state.completed && (
@@ -121,7 +216,7 @@ export function SetupPrototype() {
             <button
               type="button"
               onClick={goBack}
-              disabled={state.step === 1}
+              disabled={state.step === 1 || store.kind === "saving"}
               className="min-h-12 flex-1 rounded-xl border border-line px-4 text-sm font-medium disabled:opacity-35"
             >
               이전
@@ -342,14 +437,24 @@ function T3Step({ state, dispatch, showError, touch }: StepProps) {
   );
 }
 
-function ReviewStep({ state, onComplete }: { state: SetupState; onComplete: () => void }) {
+type ReviewStepProps = {
+  state: SetupState;
+  persistent: boolean;
+  saving: boolean;
+  saveError: string | null;
+  onComplete: () => void;
+};
+
+function ReviewStep({ state, persistent, saving, saveError, onComplete }: ReviewStepProps) {
   const pendingEstimates = ESTIMATED_LIFT_IDS.filter((id) => state.estimated[id].source === "ESTIMATE");
 
   return (
     <section>
-      <StepIntro title={state.completed ? "설정 완료 (Mock)" : "설정 확인"}>
+      <StepIntro title={state.completed ? (persistent ? "저장된 설정" : "설정 완료 (Mock)") : "설정 확인"}>
         {state.completed
-          ? "프로토타입 상태에서만 확정되었습니다. 실제로 저장되지 않으며 새로고침하면 초기화됩니다."
+          ? persistent
+            ? "이 기기에 저장된 설정입니다. 설정 수정(1RM·TM 재설정)은 정책 확정 전이라 아직 지원하지 않습니다 (U-05)."
+            : "프로토타입 상태에서만 확정되었습니다. 실제로 저장되지 않으며 새로고침하면 초기화됩니다."
           : "값을 확인한 뒤 확정하세요. 수정하려면 '이전'으로 돌아가세요."}
       </StepIntro>
 
@@ -391,9 +496,29 @@ function ReviewStep({ state, onComplete }: { state: SetupState; onComplete: () =
             );
           })}
         </dl>
+        {persistent && (
+          <p className="mt-2 text-[11px] leading-relaxed text-fg-secondary">
+            FST-7 성공 시 증가 단위(초기 제안값): 덤벨 {SETUP_EQUIPMENT.dumbbell_lateral_raise.increment}kg(한 손), 그 외{" "}
+            {SETUP_EQUIPMENT.lat_pulldown.increment}kg
+          </p>
+        )}
       </section>
 
-      {state.completed ? (
+      {state.completed && persistent ? (
+        <div className="space-y-3">
+          <p role="status" className="rounded-xl border border-accent/50 bg-accent/10 px-3 py-2 text-sm text-accent">
+            ✓ 이 기기에 저장되었습니다
+          </p>
+          {saveError && (
+            <p role="alert" className="rounded-xl border border-warning/50 bg-warning/10 px-3 py-2 text-sm text-warning">
+              {saveError}
+            </p>
+          )}
+          <Link href="/workout" className="flex min-h-12 items-center justify-center rounded-xl bg-accent px-4 font-bold text-on-accent">
+            운동 기록하러 가기
+          </Link>
+        </div>
+      ) : state.completed ? (
         <div className="space-y-3">
           <p role="status" className="rounded-xl border border-accent/50 bg-accent/10 px-3 py-2 text-sm text-accent">
             ✓ 초기 설정이 확정되었습니다 (Mock, 저장 안 됨)
@@ -415,12 +540,19 @@ function ReviewStep({ state, onComplete }: { state: SetupState; onComplete: () =
               자동 추정 상태인 값 {pendingEstimates.length}개는 확정 시 현재 값으로 고정됩니다.
             </p>
           )}
+          {saveError && (
+            <p role="alert" className="rounded-xl border border-danger/50 bg-danger/10 px-3 py-2 text-sm text-danger">
+              ⚠ {saveError}
+            </p>
+          )}
           <button
             type="button"
             onClick={onComplete}
-            className="min-h-12 w-full rounded-xl bg-accent px-4 font-bold text-on-accent"
+            disabled={saving}
+            aria-busy={saving}
+            className="min-h-12 w-full rounded-xl bg-accent px-4 font-bold text-on-accent disabled:opacity-60"
           >
-            이대로 확정 (Mock)
+            {persistent ? (saving ? "저장 중…" : saveError ? "다시 저장" : "이대로 확정하고 저장") : "이대로 확정 (Mock)"}
           </button>
         </div>
       )}

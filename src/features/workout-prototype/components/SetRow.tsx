@@ -17,6 +17,8 @@ type SetRowProps = {
   onManualTargetChange: (value: number | null) => void;
   onComplete: () => void;
   onLockedPress: () => void;
+  /** 목표 중량 수정 버튼 표시 여부. 기본 true */
+  allowTargetEdit?: boolean;
 };
 
 const formatKg = (value: number) => `${Number.isInteger(value) ? value : value.toFixed(1)}`;
@@ -36,6 +38,7 @@ export function SetRow({
   onManualTargetChange,
   onComplete,
   onLockedPress,
+  allowTargetEdit = true,
 }: SetRowProps) {
   const [isEditingTarget, setIsEditingTarget] = useState(false);
   const [targetDraft, setTargetDraft] = useState("");
@@ -86,7 +89,7 @@ export function SetRow({
 
         {/* 목표 */}
         <div className="col-start-2 row-start-1 min-w-0">
-          {editable && !saving ? (
+          {editable && !saving && allowTargetEdit ? (
             <button
               type="button"
               onClick={openTargetEditor}
@@ -165,7 +168,7 @@ export function SetRow({
         </div>
       </div>
 
-      {isEditingTarget && editable && (
+      {isEditingTarget && editable && allowTargetEdit && (
         <div className="mt-2 rounded-lg border border-line bg-surface p-2">
           <label className="block text-xs text-fg-secondary" htmlFor={`target-${idPrefix}-${set.setNumber}`}>
             {label} 목표 중량 수정 (세트 완료 전에만 가능)

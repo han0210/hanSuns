@@ -2,7 +2,7 @@
 # nSuns Hybrid — BASE.md
 
 > 프로젝트: nSuns Hybrid 5-Day
-> 버전: v0.1
+> 버전: v0.1.1 (2026-10-21, 휴식 기본값 T1·T2 60초)
 > 상태: 디자인 시스템 초안 / 시각 디자인 승인 대기
 > 문서 경로: docs/design/BASE.md
 > 벤치마킹: https://www.boostcamp.app/
@@ -285,8 +285,8 @@ COMPLETED 상태는 체크 표시와 잠금 상태를
 
 기본값:
 
-- T1: 180초
-- T2: 120초
+- T1: 60초
+- T2: 60초
 - T3: 30초
 
 지원 조작:

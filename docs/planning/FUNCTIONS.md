@@ -1,7 +1,7 @@
 # nSuns Hybrid — FUNCTIONS.md
 
 > **프로젝트:** nSuns Hybrid 5-Day
-> **버전:** v1.11 (2026-10-21, 세션 완료 조건(U-21)·세션 중 T3 수정 우선(U-22) 확정, 표시 순서 / v1.10 STEP 09 로컬 저장 계층 구현 반영 / v1.9 덤벨 한 손 기준 확정(U-19) / v1.8 Exercise·ExerciseProfile 분리, camelCase 확정, DIRECT 의미 명시, `CALCULATION_RULES.md` v0.12 기준)
+> **버전:** v1.12 (2026-10-21, 휴식 기본값 T1·T2 60초, STEP 10 Lite 화면 연동 / v1.11 세션 완료 조건(U-21)·세션 중 T3 수정 우선(U-22) 확정, 표시 순서 / v1.10 STEP 09 로컬 저장 계층 구현 반영 / v1.9 덤벨 한 손 기준 확정(U-19) / v1.8 Exercise·ExerciseProfile 분리, camelCase 확정, DIRECT 의미 명시, `CALCULATION_RULES.md` v0.12 기준)
 > **상태:** 기능 명세 초안 / 계산 템플릿 검증 대기
 > **기준 문서:** `docs/planning/PTS.md`, `docs/planning/PRD.md`
 > **목표:** 무료 모바일 웹 기반 운동 프로그램 관리 서비스
@@ -34,7 +34,7 @@ nSuns Hybrid는 근력 훈련 프로그램 nSuns와 FST-7을 결합한 5일 운�
 | 중량 단위 | 운동별 사용자 설정 |
 | 반올림 | 최종 세트 중량만, 가장 가까운 단위, 정확한 중간값은 높은 중량 |
 | 기록 저장 | 회원가입 없는 브라우저 로컬 저장 |
-| 휴식 타이머 | T1 180초 / T2 120초 / T3 30초 |
+| 휴식 타이머 | T1 60초 / T2 60초 / T3 30초 |
 
 ---
 
@@ -366,9 +366,11 @@ T3는 1RM 대신 작업 중량을 입력한다.
 
 | 단계 | 휴식 |
 |---|---|
-| T1 | 180초 |
-| T2 | 120초 |
+| T1 | 60초 |
+| T2 | 60초 |
 | T3 | 30초 |
+
+> 2026-10-21 STEP 10 사용자 결정: T1·T2 기본 휴식을 180초·120초에서 **60초**로 변경. T3 30초 유지. 사용자가 바꿀 수 있다.
 
 ### 8.2 동작 흐름
 
@@ -561,6 +563,7 @@ Dexie + IndexedDB로 구현했다(`src/storage/`). UI는 아직 연결하지 않
 | `completeSet()` | 세트 완료 트랜잭션, 휴식 타이머 시작 신호 반환 | `SET_ALREADY_COMPLETED`, `SESSION_NOT_EDITABLE`, `INVALID_ACTUAL_*` |
 | `resetSessionExercise()` | 운동별 전체 세트 리셋 | `RESET_NOT_ALLOWED`, `SESSION_EXERCISE_NOT_FOUND` |
 | `completeWorkoutSession()` | 하루 세션 완료 + T3 FST-7 증량 판정·반영 | `SESSION_HAS_INCOMPLETE_SETS`(U-21), `SESSION_NOT_IN_PROGRESS` |
+| `saveInitialSetup()` / `getSavedSetup()` | Setup 확정값(운동 13개·프로필·INITIAL TM 이력)을 한 트랜잭션으로 저장, 저장된 설정 조회 (STEP 10 추가) | `SETUP_ALREADY_EXISTS`, `INVALID_SETUP` + 개별 검증 오류 |
 
 - 모든 함수는 예외 대신 `{ ok: true, value }` / `{ ok: false, error, message? }`를 돌려준다. IndexedDB 자체 오류는 `STORAGE_ERROR`다.
 - UI는 저장 결과가 `ok`일 때만 완료로 표시한다(낙관적 완료 표시 금지).
@@ -570,6 +573,20 @@ Dexie + IndexedDB로 구현했다(`src/storage/`). UI는 아직 연결하지 않
 - 세션 완료는 모든 예정 세트가 완료되어야 한다(U-21). 거부되면 세션·세트·프로필 어느 것도 바뀌지 않는다.
 - 세션 도중 사용자가 T3 작업 중량을 바꿨다면 자동 증량으로 덮어쓰지 않고 사용자 값을 유지한다(U-22, `skippedReason: "PROFILE_CHANGED"`). 세션 시작 스냅샷과 완료 세트 기록은 어느 경우에도 바뀌지 않는다.
 - 완료 세트는 `resetSessionExercise()`를 통한 정상 리셋으로만 초기화된다. 직접 테이블 쓰기(update·put·delete·clear 등)는 저장 계층에서 거부한다. 단, 사용자가 브라우저 개발자 도구로 로컬 DB를 직접 조작하는 것까지 막지는 못한다(DATAMODEL 5장).
+
+### 10.3.2 STEP 10 Lite 화면 연동 (v1.12)
+
+| 경로 | 동작 |
+|---|---|
+| `/setup` | 4단계 Setup 입력 → 확정 시 `saveInitialSetup`. 저장 성공 후에만 완료 화면. 실패 시 입력 유지·재시도. 저장된 설정이 있으면 읽기 전용으로 복원(덮어쓰기 금지, U-05) |
+| `/workout` | 저장된 설정 확인 → 진행 중 세션이 있으면 `getActiveSession`으로 복원, 없으면 운동 시작 패널(요일·T3 작업 중량·휴식 시간) |
+| `/prototype/*` | 저장하지 않는 디자인 Mock (기존 유지) |
+
+- **범위 제한:** T1·T2 목표 세트는 원본 템플릿 미확정(U-01·U-02·U-08·U-18)이라 생성하지 않는다. 운동 세션은 선택한 요일의 **T3 FST-7 하나만** 포함하며, 화면에 "완전한 nSuns 프로그램이 아님"을 표시한다. 저장 계층 계약은 바꾸지 않았다(T3만 담은 계획은 기존 계약으로 유효).
+- **세트 완료:** 화면 검증(`validateSetCompletion`) → `completeSet` → 저장 성공 후에만 완료·잠금·휴식 타이머. 실패 시 미완료 유지·입력값 보존·재시도. 같은 세트 연속 탭은 화면(진행 중 요청 추적)과 저장 계층에서 이중으로 막는다. 다른 탭에서 먼저 완료된 경우 저장소 기준으로 다시 불러와 안내한다.
+- **세션 완료:** 모든 세트 완료 전에는 버튼 비활성(H-17). 완료 시 FST-7 결과(증가·유지·사용자 수정 유지)를 표시한다.
+- **휴식 타이머:** 기본 T3 30초(사용자 변경 가능, 기기 localStorage 저장), 종료 예정 시각 기준 계산, 새로고침 후 복원, Vibration API 지원 브라우저에서만 진동, 알림음 없음.
+- **미구현:** T1·T2 기록, 세트 완료 전 목표 중량 수정 화면, 미완료 세트 입력값 저장, 일시정지·중도 종료, 설정 수정, 증가 단위 수정.
 
 ### 10.4 데이터 백업
 

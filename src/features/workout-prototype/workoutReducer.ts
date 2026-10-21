@@ -81,13 +81,19 @@ export type WorkoutAction =
   | { type: "TIMER_RESUME"; now: number }
   | { type: "TIMER_ADJUST"; deltaSeconds: number; now: number }
   | { type: "TIMER_SKIP" }
-  | { type: "SET_SESSION_STATUS"; status: SessionStatus };
+  | { type: "SET_SESSION_STATUS"; status: SessionStatus }
+  /**
+   * 저장 계층에서 다시 읽은 세션으로 화면 상태를 바꾼다 (복원·리셋·다른 탭 변경 반영).
+   * timer를 넘기면 그 값으로, 생략하면 기존 타이머를 유지한다(대상 운동이 없어졌으면 idle).
+   */
+  | { type: "SESSION_LOADED"; session: WorkoutSession; timer?: RestTimerState };
 
 export function createInitialState(session: WorkoutSession): WorkoutState {
-  const t1 = session.exercises.find((ex) => ex.tier === "T1");
+  // T1이 없는 세션(STEP 10 Lite의 T3 전용 기록)은 첫 운동을 펼친다
+  const first = session.exercises.find((ex) => ex.tier === "T1") ?? session.exercises[0];
   return {
     session,
-    expandedExerciseId: t1?.sessionExerciseId ?? null,
+    expandedExerciseId: first?.sessionExerciseId ?? null,
     savingKeys: [],
     errors: {},
     timer: { phase: "idle" },
@@ -287,5 +293,23 @@ export function workoutReducer(state: WorkoutState, action: WorkoutAction): Work
 
     case "SET_SESSION_STATUS":
       return { ...state, session: { ...state.session, status: action.status } };
+
+    case "SESSION_LOADED": {
+      const ids = new Set(action.session.exercises.map((ex) => ex.sessionExerciseId));
+      const timer = action.timer ?? state.timer;
+      const keepTimer = timer.phase === "idle" || ids.has(timer.sessionExerciseId);
+      const expandedExerciseId =
+        state.expandedExerciseId !== null && ids.has(state.expandedExerciseId)
+          ? state.expandedExerciseId
+          : createInitialState(action.session).expandedExerciseId;
+      return {
+        ...state,
+        session: action.session,
+        expandedExerciseId,
+        savingKeys: [],
+        errors: {},
+        timer: keepTimer ? timer : { phase: "idle" },
+      };
+    }
   }
 }

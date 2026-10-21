@@ -1,10 +1,10 @@
 /**
  * 최초 설정(Setup) 프로토타입의 상태와 순수 계산.
  *
- * ⚠️ PROTOTYPE 전용 화면 상태
  * - 추정 비율은 nSuns Hybrid MVP 초기 1RM 추천값이다 (CALCULATION_RULES.md 3.6절, H-15).
  *   원본 nSuns 공식 환산 비율이 아니며, T1/T2 세트별 강도 비율(원본 템플릿)과도 무관하다.
- * - 저장 계층(Dexie)과 연결하지 않는다. 새로고침하면 초기화된다.
+ * - 이 파일은 화면 상태만 다룬다. 저장 변환은 setupPersistence.ts, 저장은 storage/repositories가 맡는다.
+ *   (/prototype/setup은 저장하지 않는 Mock, /setup은 Dexie에 저장)
  */
 
 import { parsePositiveKg } from "@/lib/weightInput";
@@ -166,12 +166,15 @@ export type SetupAction =
   | { type: "REVERT_ESTIMATE"; id: EstimatedLiftId }
   | { type: "SET_T3"; id: T3ExerciseId; text: string }
   | { type: "GO_TO_STEP"; step: SetupStep }
-  | { type: "COMPLETE" };
+  | { type: "COMPLETE" }
+  /** 저장 계층에서 읽은(또는 방금 저장한) 확정 상태로 화면 전체를 바꾼다 */
+  | { type: "RESTORE"; state: SetupState };
 
 /** 부동소수점 잡음(77.00000000000001)만 제거하고 값 자체는 반올림하지 않는다 */
 const valueText = (value: number) => String(Number(value.toPrecision(12)));
 
 export function setupReducer(state: SetupState, action: SetupAction): SetupState {
+  if (action.type === "RESTORE") return action.state;
   if (state.completed && action.type !== "GO_TO_STEP") return state;
   switch (action.type) {
     case "SET_DIRECT":
