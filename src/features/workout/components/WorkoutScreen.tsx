@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import type { Exercise, ExerciseProfile, Tier, WorkoutSession } from "@/domain/types/model";
 import { calculateTemplateSets } from "@/domain/templates/hybridTemplates";
-import { kg } from "@/domain/types/weight";
+import { kg, type WeightUnit } from "@/domain/types/weight";
 import { formatKg, parsePositiveKg } from "@/lib/weightInput";
 import { getBrowserDatabase, type NsunsDatabase } from "@/storage/db";
 import { updateT3WorkingWeight } from "@/storage/repositories/exerciseRepository";
@@ -17,6 +17,7 @@ import {
   getSessionDetail,
   resetSessionExercise,
   startWorkoutSession,
+  updateSetDraft,
   type CompleteSessionOutcome,
   type SessionDetail,
 } from "@/storage/repositories/workoutRepository";
@@ -28,7 +29,8 @@ import { findSet, getSessionProgress, toSetKey, validateSetCompletion } from "@/
 import { createInitialState, getTimerRemainingMs, workoutReducer, type RestTimerState } from "@/features/workout-prototype/workoutReducer";
 import type { WorkoutSession as UiSession } from "@/features/workout-prototype/types";
 import { loadRestSeconds, loadTimer, saveRestSeconds, saveTimer } from "../restTimerStorage";
-import { sessionScopeOf, storageErrorMessage, toSetRecordId, toUiSession } from "../sessionMapper";
+import { draftToSave, weightStepFor } from "../setInput";
+import { describeTmProgression, sessionScopeOf, storageErrorMessage, tmIncrementLabel, toSetRecordId, toUiSession } from "../sessionMapper";
 import {
   buildSessionPlan,
   dayLabel,
@@ -43,6 +45,9 @@ import {
   TRAINING_DAYS,
   type TrainingDay,
 } from "../t3SessionPlan";
+
+/** 현재 시각(ms). 이벤트·비동기 처리에서만 호출한다 (렌더 중 호출 금지) */
+const currentTimeMs = () => Date.now();
 
 const EMPTY_SESSION: UiSession = { sessionId: "", dayLabel: "", status: "NOT_STARTED", exercises: [] };
 
@@ -92,6 +97,62 @@ export function WorkoutScreen() {
 
   const { session, timer } = state;
   const db = useRef<NsunsDatabase | null>(null);
+  /** 운동(sessionExerciseId)별 세트 단위·증가 단위 스냅샷. 단위 혼용 방지와 +/- 단계 계산에 쓴다 */
+  const [meta, setMeta] = useState<Record<string, { unit: WeightUnit; increment: number }>>({});
+  /** 미완료 세트 입력값 초안 저장 대기 (세트 키 → 타이머·저장할 값) */
+  const pendingDrafts = useRef(new Map<string, { timeoutId: number; save: () => Promise<void> }>());
+
+  /** 저장소에서 읽은 세션을 화면에 반영 (세트 단위 정보 포함) */
+  const loadDetail = useCallback((detail: SessionDetail, timerOverride?: RestTimerState) => {
+    setMeta(Object.fromEntries(detail.exercises.map((e) => [e.sessionExercise.sessionExerciseId, { unit: e.sessionExercise.weightUnit, increment: e.sessionExercise.increment }])));
+    dispatch({ type: "SESSION_LOADED", session: toUiSession(detail, exerciseName, dayLabelOf(detail)), timer: timerOverride });
+  }, []);
+
+  /** 대기 중인 초안 저장을 즉시 실행 (화면 이탈·백그라운드 전환 시) */
+  const flushDrafts = useCallback(() => {
+    for (const [key, pending] of pendingDrafts.current) {
+      window.clearTimeout(pending.timeoutId);
+      pendingDrafts.current.delete(key);
+      void pending.save();
+    }
+  }, []);
+
+  useEffect(() => {
+    const onHide = () => {
+      if (document.visibilityState === "hidden") flushDrafts();
+    };
+    document.addEventListener("visibilitychange", onHide);
+    window.addEventListener("pagehide", flushDrafts);
+    return () => {
+      document.removeEventListener("visibilitychange", onHide);
+      window.removeEventListener("pagehide", flushDrafts);
+      flushDrafts();
+    };
+  }, [flushDrafts]);
+
+  /**
+   * 미완료 세트 입력값을 Dexie 초안으로 저장한다 (입력이 멈추고 0.4초 뒤). 완료 상태는 바꾸지 않는다.
+   * 새로고침 후 같은 값으로 복원하기 위한 편의 기능이라, 실패해도 화면 입력은 유지하고 완료 저장에는 영향이 없다.
+   */
+  function scheduleDraftSave(sessionExerciseId: string, setNumber: number, field: "weight" | "reps", value: string) {
+    const database = db.current;
+    const found = findSet(state.session, sessionExerciseId, setNumber);
+    const unit = meta[sessionExerciseId]?.unit;
+    if (!database || !found || found.set.completed || !unit) return;
+    const weightText = field === "weight" ? value : found.set.actualWeightDraft;
+    const repsText = field === "reps" ? value : found.set.actualRepsDraft;
+    const key = toSetKey(sessionExerciseId, setNumber);
+    const previous = pendingDrafts.current.get(key);
+    if (previous) window.clearTimeout(previous.timeoutId);
+    const save = async () => {
+      await updateSetDraft(database, toSetRecordId(sessionExerciseId, setNumber), draftToSave(weightText, repsText, unit));
+    };
+    const timeoutId = window.setTimeout(() => {
+      pendingDrafts.current.delete(key);
+      void save();
+    }, 400);
+    pendingDrafts.current.set(key, { timeoutId, save });
+  }
 
   /** 저장소 기준으로 화면을 다시 구성한다 (최초 진입·리셋·완료·다른 탭 충돌 후) */
   const refresh = useCallback(async (timerOverride?: RestTimerState) => {
@@ -113,9 +174,9 @@ export function WorkoutScreen() {
       return;
     }
     if (active.value) {
-      const ui = toUiSession(active.value, exerciseName, dayLabelOf(active.value));
-      dispatch({ type: "SESSION_LOADED", session: ui, timer: timerOverride ?? loadTimer(ui.sessionId, Date.now()) });
-      setNow(Date.now());
+      const at = currentTimeMs();
+      loadDetail(active.value, timerOverride ?? loadTimer(active.value.session.sessionId, at));
+      setNow(at);
       setPhase({ kind: "active" });
       return;
     }
@@ -126,7 +187,7 @@ export function WorkoutScreen() {
       lastCompleted: last.value,
       needsSetupUpgrade: restoredSetup.kind === "needsUpgrade",
     });
-  }, []);
+  }, [loadDetail]);
 
   useEffect(() => {
     // 브라우저에서만 실행: 서버 렌더링 중에는 IndexedDB에 접근하지 않는다
@@ -175,11 +236,19 @@ export function WorkoutScreen() {
       dispatch({ type: "VALIDATION_FAILED", sessionExerciseId, setNumber, errors: validation.errors });
       return;
     }
+    // 이 세트의 대기 중인 초안 저장은 취소한다 (완료 저장이 실제값을 기록)
+    const pending = pendingDrafts.current.get(key);
+    if (pending) {
+      window.clearTimeout(pending.timeoutId);
+      pendingDrafts.current.delete(key);
+    }
+    const unit = meta[sessionExerciseId]?.unit ?? "kg";
     inFlight.current.add(key);
     dispatch({ type: "SAVE_STARTED", sessionExerciseId, setNumber });
     try {
       const result = await completeSet(database, toSetRecordId(sessionExerciseId, setNumber), {
-        actualWeight: kg(validation.weight),
+        // 세트 단위 그대로 저장 (kg↔lb 변환 없음)
+        actualWeight: { value: validation.weight, unit },
         actualReps: validation.reps,
       });
       if (result.ok) {
@@ -205,6 +274,12 @@ export function WorkoutScreen() {
   async function handleReset(sessionExerciseId: string) {
     const database = db.current;
     if (!database || busy) return;
+    // 리셋 대상 운동의 대기 중인 초안 저장은 버린다 (리셋 후 이전 입력이 되살아나지 않게)
+    for (const [key, pending] of pendingDrafts.current) {
+      if (!key.startsWith(`${sessionExerciseId}#`)) continue;
+      window.clearTimeout(pending.timeoutId);
+      pendingDrafts.current.delete(key);
+    }
     setBusy(true);
     const result = await resetSessionExercise(database, { sessionId: session.sessionId, sessionExerciseId });
     setBusy(false);
@@ -215,11 +290,7 @@ export function WorkoutScreen() {
     const detail = await getSessionDetail(database, session.sessionId);
     if (detail.ok && detail.value) {
       const stopTimer = timer.phase !== "idle" && timer.sessionExerciseId === sessionExerciseId;
-      dispatch({
-        type: "SESSION_LOADED",
-        session: toUiSession(detail.value, exerciseName, dayLabelOf(detail.value)),
-        timer: stopTimer ? { phase: "idle" } : undefined,
-      });
+      loadDetail(detail.value, stopTimer ? { phase: "idle" } : undefined);
       setStatusMessage("운동 기록이 리셋되었습니다");
     }
   }
@@ -268,8 +339,7 @@ export function WorkoutScreen() {
         lastCompleted={phase.lastCompleted}
         needsSetupUpgrade={phase.needsSetupUpgrade}
         onStarted={async (detail) => {
-          const ui = toUiSession(detail, exerciseName, dayLabelOf(detail));
-          dispatch({ type: "SESSION_LOADED", session: ui, timer: { phase: "idle" } });
+          loadDetail(detail, { phase: "idle" });
           setPhase({ kind: "active" });
         }}
         onActiveExists={() => void refresh()}
@@ -305,7 +375,7 @@ export function WorkoutScreen() {
         </p>
       ) : (
         <p className="mt-3 rounded-xl border border-line bg-surface px-3 py-2 text-xs leading-relaxed text-fg-secondary">
-          {HYBRID_TEMPLATE_NOTICE} T1·T2 TM은 자동으로 올리지 않습니다.
+          {HYBRID_TEMPLATE_NOTICE} T1·T2는 모든 세트의 목표 중량·반복을 달성하면 다음 운동부터 TM이 올라갑니다 (Hybrid 자체 증량 정책).
         </p>
       )}
 
@@ -359,10 +429,15 @@ export function WorkoutScreen() {
             errors={state.errors}
             dataLabel={DATA_LABEL[exercise.tier]}
             allowTargetEdit={false}
+            stepper={{
+              weightStep: weightStepFor(meta[exercise.sessionExerciseId]?.unit ?? "kg", meta[exercise.sessionExerciseId]?.increment ?? 2.5),
+              unitLabel: meta[exercise.sessionExerciseId]?.unit ?? "kg",
+            }}
             onToggle={() => dispatch({ type: "TOGGLE_EXPAND", sessionExerciseId: exercise.sessionExerciseId })}
-            onDraftChange={(setNumber, field, value) =>
-              dispatch({ type: "UPDATE_DRAFT", sessionExerciseId: exercise.sessionExerciseId, setNumber, field, value })
-            }
+            onDraftChange={(setNumber, field, value) => {
+              dispatch({ type: "UPDATE_DRAFT", sessionExerciseId: exercise.sessionExerciseId, setNumber, field, value });
+              scheduleDraftSave(exercise.sessionExerciseId, setNumber, field, value);
+            }}
             onManualTargetChange={() => undefined}
             onCompleteSet={(setNumber) => void handleCompleteSet(exercise.sessionExerciseId, setNumber)}
             onRequestReset={() => setDialog({ kind: "reset", sessionExerciseId: exercise.sessionExerciseId })}
@@ -441,7 +516,9 @@ export function WorkoutScreen() {
       >
         <p>완료하면 기록이 잠기고 리셋할 수 없습니다.</p>
         <p className="text-xs">FST-7 성공(7세트 모두 12회 이상, 목표 중량 이상)이면 다음 작업 중량이 한 단계 올라갑니다.</p>
-        {!isT3OnlySession && <p className="text-xs">T1·T2 TM은 자동으로 올리지 않습니다 (AMRAP 증량 규칙 미확정).</p>}
+        {!isT3OnlySession && (
+          <p className="text-xs">T1·T2는 모든 세트가 목표 중량·반복(AMRAP은 최소 반복) 이상이면 다음 운동부터 TM이 올라가고, 하나라도 미달이면 유지됩니다.</p>
+        )}
       </ConfirmationDialog>
 
       <ConfirmationDialog
@@ -463,8 +540,26 @@ export function WorkoutScreen() {
                 : `작업 중량 유지 (${formatKg(p.decision.nextWorkingWeight.value)}kg)`}
             </p>
           ))}
-        {dialog.kind === "finished" && dialog.outcome.pendingProgressions.length > 0 && (
-          <p className="text-xs">T1·T2 기록은 저장되었고, TM은 바뀌지 않았습니다.</p>
+        {dialog.kind === "finished" && dialog.outcome.tmProgressions.length > 0 && (
+          <ul className="space-y-2" aria-label="T1·T2 TM 결과">
+            {dialog.outcome.tmProgressions.map((p) => {
+              const view = describeTmProgression(p);
+              return (
+                <li key={p.exerciseId} className="rounded-lg bg-surface px-3 py-2">
+                  <p className="flex items-baseline justify-between gap-2">
+                    <strong className="text-fg">
+                      {p.tiers.join("·")} {exerciseName(p.exerciseId)}
+                    </strong>
+                    <span className={`shrink-0 text-xs font-semibold ${view.achieved ? "text-accent" : "text-fg-secondary"}`}>
+                      {view.achieved ? "목표 달성" : p.status === "HELD" ? "목표 미달" : "증량 없음"}
+                    </span>
+                  </p>
+                  <p className="tabular-nums text-fg">{view.tmLine}</p>
+                  {view.reason && <p className="text-xs">{view.reason}</p>}
+                </li>
+              );
+            })}
+          </ul>
         )}
       </ConfirmationDialog>
     </div>
@@ -637,7 +732,10 @@ function StartPanel({ profiles, exercises, lastCompleted, needsSetupUpgrade, onS
               <p className="mt-2 text-xs text-warning">설정값이 없습니다. 초기 설정에서 추가하세요.</p>
             ) : (
               <p className="mt-2 flex items-baseline justify-between gap-2 text-sm">
-                <span className="text-fg-secondary">TM {formatKg(row.tm)} {row.unit}</span>
+                <span className="text-fg-secondary">
+                  TM {formatKg(row.tm)} {row.unit}
+                  <span className="block text-[11px]">{tmIncrementLabel(row.exerciseId) ?? "자동 증량 없음"}</span>
+                </span>
                 <span className="text-right text-xs tabular-nums text-fg-secondary">
                   {row.weights.length > 0 ? `${formatKg(Math.min(...row.weights))}~${formatKg(Math.max(...row.weights))} ${row.unit}` : "—"}
                 </span>

@@ -213,7 +213,7 @@ describe("Setup 저장 → 전체 세션 시작 → 세트 기록 → 복원 →
     expect(ui.exercises[0].sets[0]).toMatchObject({ completed: true, actualWeight: 57.5, actualReps: 8 });
   });
 
-  it("24세트 중 하나라도 미완료면 완료 거부, 모두 완료하면 COMPLETED + T3만 증량, T1·T2 TM 불변", async () => {
+  it("24세트 중 하나라도 미완료면 완료 거부, 모두 목표대로 완료하면 COMPLETED + T3 증량 + T1·T2 TM 증량(H-22)", async () => {
     const detail = expectOk(await startWorkoutSession(db, buildSessionPlan(monday, MONDAY, REST)));
     const last = detail.exercises[2].sets[6];
     await complete({ ...detail, exercises: detail.exercises.map((e) => ({ ...e, sets: e.sets.filter((s) => s.setRecordId !== last.setRecordId) })) });
@@ -221,9 +221,13 @@ describe("Setup 저장 → 전체 세션 시작 → 세트 기록 → 복원 →
     expectOk(await completeSet(db, last.setRecordId, { actualWeight: kg(15), actualReps: 12 }));
     const done = expectOk(await completeWorkoutSession(db, detail.session.sessionId));
     expect(done.t3Progressions[0]).toMatchObject({ applied: true, decision: { nextWorkingWeight: { value: 17.5 } } });
-    expect(done.pendingProgressions.map((p) => p.tier)).toEqual(["T1", "T2"]);
-    expect(expectOk(await getExerciseProfile(db, "bench_press"))?.currentTM).toBe(90);
-    expect(expectOk(await getExerciseProfile(db, "ohp"))?.currentTM).toBe(54);
+    expect(done.pendingProgressions).toEqual([]);
+    expect(done.tmProgressions.map((p) => [p.exerciseId, p.status, p.fromTM, p.toTM])).toEqual([
+      ["bench_press", "INCREASED", 90, 92.5],
+      ["ohp", "INCREASED", 54, 56.5],
+    ]);
+    expect(expectOk(await getExerciseProfile(db, "bench_press"))?.currentTM).toBe(92.5);
+    expect(expectOk(await getExerciseProfile(db, "ohp"))?.currentTM).toBe(56.5);
   });
 
   it("마지막 완료 세션: 완료 시각이 가장 늦은 COMPLETED 세션 (진행 중 세션 제외, 이전 T3 전용 세션 포함)", async () => {

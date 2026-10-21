@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { getEffectiveTargetWeight, parseTargetWeight } from "../workoutLogic";
+import { REPS_STEP, stepReps, stepWeight } from "@/features/workout/setInput";
 import type { SetFieldErrors, SetRecord } from "../types";
 
 type SetRowProps = {
@@ -19,6 +20,11 @@ type SetRowProps = {
   onLockedPress: () => void;
   /** 목표 중량 수정 버튼 표시 여부. 기본 true */
   allowTargetEdit?: boolean;
+  /**
+   * 실제 중량·반복 +/- 버튼 사용 (실제 기록 화면). weightStep은 세트 단위 기준 한 단계(kg 세트 2.5).
+   * 생략하면 숫자 입력칸만 보여준다 (프로토타입).
+   */
+  stepper?: { readonly weightStep: number; readonly unitLabel: string };
 };
 
 const formatKg = (value: number) => `${Number.isInteger(value) ? value : value.toFixed(1)}`;
@@ -39,6 +45,7 @@ export function SetRow({
   onComplete,
   onLockedPress,
   allowTargetEdit = true,
+  stepper,
 }: SetRowProps) {
   const [isEditingTarget, setIsEditingTarget] = useState(false);
   const [targetDraft, setTargetDraft] = useState("");
@@ -78,7 +85,12 @@ export function SetRow({
       className={`rounded-xl border px-2 py-2 ${rowTone}`}
       aria-label={`${label}${set.isAmrap ? " AMRAP" : ""}${set.completed ? " 완료됨" : isCurrent ? " 현재 세트" : ""}`}
     >
-      <div className="grid grid-cols-[32px_minmax(0,1fr)_48px] items-center gap-x-2 gap-y-2 @min-[360px]:grid-cols-[32px_minmax(0,1fr)_auto_48px]">
+      {/* +/- 버튼을 쓰면 입력 영역이 넓어지므로 화면 폭과 관계없이 둘째 줄에 둔다 */}
+      <div
+        className={`grid grid-cols-[32px_minmax(0,1fr)_48px] items-center gap-x-2 gap-y-2 ${
+          stepper ? "" : "@min-[360px]:grid-cols-[32px_minmax(0,1fr)_auto_48px]"
+        }`}
+      >
         {/* 세트 번호 */}
         <div className="col-start-1 row-start-1 flex flex-col items-center leading-none">
           <span className="text-base font-semibold tabular-nums">{set.setNumber}</span>
@@ -114,7 +126,11 @@ export function SetRow({
         </div>
 
         {/* 실제 입력 또는 완료 기록 */}
-        <div className="col-span-2 col-start-2 row-start-2 @min-[360px]:col-span-1 @min-[360px]:col-start-3 @min-[360px]:row-start-1">
+        <div
+          className={`col-span-2 col-start-2 row-start-2 ${
+            stepper ? "" : "@min-[360px]:col-span-1 @min-[360px]:col-start-3 @min-[360px]:row-start-1"
+          }`}
+        >
           {set.completed ? (
             <p className="flex min-h-11 items-center gap-1 px-1 text-base font-semibold tabular-nums">
               <span>{formatKg(set.actualWeight ?? 0)}</span>
@@ -123,6 +139,33 @@ export function SetRow({
               <span>{set.actualReps}</span>
               <span className="text-xs font-normal text-fg-secondary">회</span>
             </p>
+          ) : stepper ? (
+            <div className="flex flex-col gap-2 @min-[360px]:flex-row">
+              <StepperField
+                label={`${label} 실제 중량 (${stepper.unitLabel})`}
+                unit={stepper.unitLabel}
+                inputMode="decimal"
+                value={set.actualWeightDraft}
+                stepLabel={`${stepper.weightStep}${stepper.unitLabel}`}
+                disabled={inputsDisabled}
+                invalid={Boolean(errors?.weight)}
+                describedBy={hasError ? errorId : undefined}
+                onChange={(value) => onDraftChange("weight", value)}
+                onStep={(direction) => onDraftChange("weight", stepWeight(set.actualWeightDraft, direction * stepper.weightStep, targetWeight))}
+              />
+              <StepperField
+                label={`${label} 실제 반복 (회)`}
+                unit="회"
+                inputMode="numeric"
+                value={set.actualRepsDraft}
+                stepLabel="1회"
+                disabled={inputsDisabled}
+                invalid={Boolean(errors?.reps)}
+                describedBy={hasError ? errorId : undefined}
+                onChange={(value) => onDraftChange("reps", value)}
+                onStep={(direction) => onDraftChange("reps", stepReps(set.actualRepsDraft, direction * REPS_STEP, set.targetReps))}
+              />
+            </div>
           ) : (
             <div className="flex gap-2">
               <NumberField
@@ -154,7 +197,7 @@ export function SetRow({
         </div>
 
         {/* 완료 체크박스 */}
-        <div className="col-start-3 row-start-1 flex justify-center @min-[360px]:col-start-4">
+        <div className={`col-start-3 row-start-1 flex justify-center ${stepper ? "" : "@min-[360px]:col-start-4"}`}>
           <CompletionCheckbox
             label={label}
             completed={set.completed}
@@ -301,6 +344,57 @@ function NumberField({
         {unit}
       </span>
     </label>
+  );
+}
+
+type StepperFieldProps = {
+  label: string;
+  unit: string;
+  inputMode: "decimal" | "numeric";
+  value: string;
+  /** 버튼 접근성 이름에 쓰는 한 단계 (예: "2.5kg", "1회") */
+  stepLabel: string;
+  disabled: boolean;
+  invalid: boolean;
+  describedBy?: string;
+  onChange: (value: string) => void;
+  /** -1: 줄이기, +1: 늘리기 */
+  onStep: (direction: -1 | 1) => void;
+};
+
+/**
+ * [−] [숫자 입력] [+] 한 묶음. 버튼은 44×44px 이상, 숫자 직접 입력도 그대로 가능하다.
+ * 0 아래로 내려가지 않게 하는 처리는 onStep을 만드는 쪽(stepWeight·stepReps)이 맡는다.
+ */
+function StepperField({ label, unit, inputMode, value, stepLabel, disabled, invalid, describedBy, onChange, onStep }: StepperFieldProps) {
+  const buttonClass =
+    "flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-line bg-surface text-lg font-semibold disabled:opacity-40";
+  return (
+    <div className="flex min-w-0 flex-1 items-center gap-1.5">
+      <button type="button" className={buttonClass} disabled={disabled} aria-label={`${label} ${stepLabel} 줄이기`} onClick={() => onStep(-1)}>
+        −
+      </button>
+      <label className="relative block min-w-0 flex-1">
+        <span className="sr-only">{label}</span>
+        <input
+          type="text"
+          inputMode={inputMode}
+          autoComplete="off"
+          value={value}
+          disabled={disabled}
+          aria-invalid={invalid}
+          aria-describedby={describedBy}
+          onChange={(event) => onChange(event.target.value)}
+          className={`h-11 w-full rounded-lg border bg-surface pl-2 pr-7 text-center text-base font-semibold tabular-nums outline-none focus-visible:border-accent disabled:opacity-50 ${
+            invalid ? "border-danger" : "border-line"
+          }`}
+        />
+        <span aria-hidden="true" className="pointer-events-none absolute inset-y-0 right-2 flex items-center text-[11px] text-fg-secondary">{unit}</span>
+      </label>
+      <button type="button" className={buttonClass} disabled={disabled} aria-label={`${label} ${stepLabel} 늘리기`} onClick={() => onStep(1)}>
+        +
+      </button>
+    </div>
   );
 }
 

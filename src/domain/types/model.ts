@@ -176,7 +176,13 @@ export type CompletedSetRecord = SetRecordBase & {
 
 export type SetRecord = IncompleteSetRecord | CompletedSetRecord;
 
-export type TMChangeReason = "INITIAL" | "AMRAP_PROGRESSION" | "USER_RESET";
+/**
+ * - INITIAL: Setup 최초 설정
+ * - AMRAP_PROGRESSION: AMRAP 기반 증량 (예약, 규칙 미확정 U-04)
+ * - SESSION_PROGRESSION: 세션 정상 완료 시 모든 세트 목표 달성에 따른 Hybrid 자체 증량 (H-22)
+ * - USER_RESET: 사용자 재설정 (예약, U-05)
+ */
+export type TMChangeReason = "INITIAL" | "AMRAP_PROGRESSION" | "SESSION_PROGRESSION" | "USER_RESET";
 
 /** currentTM 변경 이력. (sourceSessionId, exerciseId, sourceTier)로 증량 중복을 막는다 */
 export type TMChange = {

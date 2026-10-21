@@ -568,11 +568,12 @@ describe("completeWorkoutSession — 세션 완료(U-21)와 T3 FST-7 증량(U-22
     expect(expectOk(await getExerciseProfile(db, "latPulldown"))).toMatchObject({ t3WorkingWeight: 50, t3WorkingWeightRevision: 0 });
   });
 
-  it("T3 판정 시각을 기록하고, T1·T2는 규칙 미확정으로 보류 목록에만 담는다 (TM 불변)", async () => {
+  it("T3 판정 시각을 기록하고, 증량 정책이 없는 운동(테스트용 bench)은 보류·TM 불변, 정책이 있는 OHP는 H-22로 판정", async () => {
     const detail = await startFixture();
     await completeEverySet(db, detail, clock);
     const result = expectOk(await completeWorkoutSession(db, detail.session.sessionId, { clock }));
-    expect(result.pendingProgressions.map((p) => `${p.tier}:${p.exerciseId}`)).toEqual(["T1:bench", "T2:ohp"]);
+    expect(result.pendingProgressions.map((p) => `${p.tier}:${p.exerciseId}`)).toEqual(["T1:bench"]);
+    expect(result.tmProgressions.find((p) => p.exerciseId === "ohp")).toMatchObject({ status: "INCREASED", fromTM: 54, toTM: 56.5 });
     const after = await reload(detail.session.sessionId);
     expect(byExercise(after, "latPulldown").sessionExercise.progressionEvaluatedAt).not.toBeNull();
     expect(byExercise(after, "bench").sessionExercise.progressionEvaluatedAt).toBeNull();

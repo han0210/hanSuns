@@ -2,9 +2,11 @@
  * 저장 계층 세션(SessionDetail) → Workout 화면 상태(프로토타입 UI 타입) 변환.
  *
  * 화면 컴포넌트(ExerciseAccordion·SetRow)는 프로토타입 타입을 쓰므로, 저장된 기록을 그 형태로 바꿔 재사용한다.
- * 완료 세트는 실제값을 그대로, 미완료 세트는 저장된 입력값이 있으면 입력칸 초안으로 채운다.
+ * 완료 세트는 실제값을 그대로 보여준다. 미완료 세트의 입력칸은 저장된 초안이 있으면 그 값, 없으면 **그 세트 자체의**
+ * 목표 중량·목표 반복으로 채운다(이전 세트 기록을 복사하지 않는다). 채워진 값은 완료를 누르기 전까지 미완료다.
  */
-import type { SessionDetail } from "@/storage/repositories/workoutRepository";
+import type { SessionDetail, TMProgressionOutcome } from "@/storage/repositories/workoutRepository";
+import { HYBRID_TM_INCREMENTS } from "@/domain/calculations/tmProgression";
 import type { SessionExercise as UiExercise, WorkoutSession as UiSession } from "@/features/workout-prototype/types";
 
 const TIER_LABEL = { T1: "Main Lift", T2: "Secondary Lift", T3: "FST-7" } as const;
@@ -38,8 +40,8 @@ export function toUiSession(detail: SessionDetail, names: (exerciseId: string) =
           targetReps: set.targetReps,
           isAmrap: set.isAmrap,
           manualTargetWeight: set.manualTargetWeight,
-          actualWeightDraft: draftText(set.actualWeight),
-          actualRepsDraft: draftText(set.actualReps),
+          actualWeightDraft: draftText(set.actualWeight ?? (set.completed ? null : set.manualTargetWeight ?? set.targetWeight)),
+          actualRepsDraft: draftText(set.actualReps ?? (set.completed ? null : set.targetReps)),
           actualWeight: set.completed ? set.actualWeight : null,
           actualReps: set.completed ? set.actualReps : null,
           completed: set.completed,
@@ -87,3 +89,48 @@ export function storageErrorMessage(error: string): string {
       return `저장하지 못했습니다 (${error}). 다시 시도해 주세요.`;
   }
 }
+
+const fmt = (value: number) => String(Math.round(value * 100) / 100);
+
+const HOLD_REASON_TEXT: Record<TMProgressionOutcome["reasons"][number]["code"], string> = {
+  NO_SETS: "세트 없음",
+  SET_INCOMPLETE: "미완료",
+  ACTUAL_WEIGHT_MISSING: "실제 중량 없음",
+  ACTUAL_REPS_MISSING: "실제 반복 없음",
+  WEIGHT_BELOW_TARGET: "중량 미달",
+  REPS_BELOW_TARGET: "반복 미달",
+};
+
+/**
+ * T1·T2 TM 증량 결과의 화면 문구 (H-22). 저장 계층이 돌려준 결과만 표시하며, 저장 전에 증량을 확정 표시하지 않는다.
+ * @returns achieved: 목표 달성 여부(INCREASED), tmLine: TM 변화, reason: 유지 사유
+ */
+export function describeTmProgression(outcome: TMProgressionOutcome): { achieved: boolean; tmLine: string; reason: string | null } {
+  const unit = outcome.unit;
+  const from = outcome.fromTM === null ? "—" : `${fmt(outcome.fromTM)}${unit}`;
+  const to = outcome.toTM === null ? "—" : `${fmt(outcome.toTM)}${unit}`;
+  switch (outcome.status) {
+    case "INCREASED":
+      return { achieved: true, tmLine: `이전 TM ${from} → 다음 TM ${to}`, reason: null };
+    case "HELD": {
+      const details = outcome.reasons
+        .slice(0, 3)
+        .map((r) => `${r.tier} ${r.setNumber === null ? "" : `${r.setNumber}세트 `}${HOLD_REASON_TEXT[r.code]}`)
+        .join(", ");
+      const more = outcome.reasons.length > 3 ? ` 외 ${outcome.reasons.length - 3}건` : "";
+      return { achieved: false, tmLine: `TM ${from} 유지`, reason: `목표 미달 — 다음 운동 중량 유지 (${details}${more})` };
+    }
+    case "NO_POLICY":
+      return { achieved: false, tmLine: `TM ${from} 유지`, reason: "자동 증량값이 정해지지 않은 운동 — TM 유지" };
+    case "UNIT_NOT_SUPPORTED":
+      return { achieved: false, tmLine: `TM ${from} 유지`, reason: "lb 단위 증량 정책 확정 전 — TM 유지" };
+    case "ALREADY_APPLIED":
+      return { achieved: false, tmLine: `TM ${from}`, reason: "이 세션의 증량이 이미 반영됨" };
+  }
+}
+
+/** 시작 화면 안내: 운동의 자동 증량값 (없으면 null) */
+export const tmIncrementLabel = (exerciseId: string): string | null => {
+  const inc = HYBRID_TM_INCREMENTS[exerciseId];
+  return inc ? `목표 달성 시 TM +${fmt(inc.value)}${inc.unit}` : null;
+};

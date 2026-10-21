@@ -115,10 +115,19 @@ export function getResetPermission(status: SessionStatus): ResetPermission {
   }
 }
 
-/** 리셋할 기록(완료 세트 또는 입력 중인 값)이 있는지 */
+/** 입력칸이 기본값(비어 있음 또는 그 세트의 목표값으로 채워진 상태)인지 */
+const isDefaultDraft = (draft: string, target: number) => draft === "" || Number(draft) === target;
+
+/**
+ * 리셋할 기록(완료 세트 또는 사용자가 바꾼 입력값)이 있는지.
+ * 실제 기록 화면은 입력칸을 목표값으로 미리 채우므로, 목표값 그대로인 입력은 기록으로 보지 않는다.
+ */
 export const hasResettableRecord = (exercise: SessionExercise): boolean =>
   exercise.sets.some(
-    (set) => set.completed || set.actualWeightDraft !== "" || set.actualRepsDraft !== "",
+    (set) =>
+      set.completed ||
+      !isDefaultDraft(set.actualWeightDraft, getEffectiveTargetWeight(set)) ||
+      !isDefaultDraft(set.actualRepsDraft, set.targetReps),
   );
 
 // ---------------------------------------------------------------------------

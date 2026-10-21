@@ -30,6 +30,13 @@ import type { Mass } from "@/domain/types/weight";
 import { isPositiveFinite } from "@/domain/calculations/precision";
 import { evaluateFST7Progress, FST7_SET_COUNT, FST7_TARGET_REPS, type Fst7Decision } from "@/domain/calculations/fst7Progress";
 import { calculateTemplateSets, type SetTemplate } from "@/domain/templates/hybridTemplates";
+import {
+  evaluateTargetProgress,
+  HYBRID_TM_INCREMENTS,
+  nextTrainingMax,
+  TM_PROGRESSION_RULE,
+  type TargetHoldCode,
+} from "@/domain/calculations/tmProgression";
 import type { NsunsDatabase } from "../db";
 import { createId, systemClock, toIsoDateTime } from "../ids";
 import { runStorage, ValidationStop, type StorageResult } from "../result";
@@ -469,10 +476,33 @@ export type T3ProgressionOutcome = {
   readonly skippedReason: "PROFILE_CHANGED" | null;
 };
 
+/**
+ * T1·T2 TM 증량 결과 (운동 단위, H-22). 같은 세션에 같은 운동이 T1·T2로 함께 있으면 하나로 묶는다.
+ * - INCREASED: 모든 세트 목표 달성 → currentTM 증량, TMChange 기록
+ * - HELD: 한 세트라도 목표 미달 → TM 유지 (reasons에 세트별 사유)
+ * - NO_POLICY: 증량값이 확정되지 않은 운동 → 판정하지 않고 유지
+ * - UNIT_NOT_SUPPORTED: lb 프로필 등 증량값과 단위가 다름 → 유지
+ * - ALREADY_APPLIED: 이 세션·운동의 TM 변경 이력이 이미 있음 → 중복 증량하지 않음
+ */
+export type TMProgressionOutcome = {
+  readonly exerciseId: string;
+  readonly tiers: Tier[];
+  readonly sessionExerciseIds: SessionExerciseId[];
+  readonly status: "INCREASED" | "HELD" | "NO_POLICY" | "UNIT_NOT_SUPPORTED" | "ALREADY_APPLIED";
+  /** 판정 시점 currentTM */
+  readonly fromTM: number | null;
+  /** 다음 세션 TM (유지면 fromTM과 같음) */
+  readonly toTM: number | null;
+  readonly unit: SessionExercise["weightUnit"];
+  readonly reasons: { tier: Tier; setNumber: number | null; code: TargetHoldCode }[];
+};
+
 export type CompleteSessionOutcome = {
   readonly session: WorkoutSession;
   readonly t3Progressions: T3ProgressionOutcome[];
-  /** 증량 규칙이 미확정이라 판정하지 않은 T1·T2 운동 (U-01·U-02·U-04) */
+  /** T1·T2 TM 증량 판정 결과 (H-22) */
+  readonly tmProgressions: TMProgressionOutcome[];
+  /** 증량 정책이 없거나(NO_POLICY) 단위 정책이 없어(UNIT_NOT_SUPPORTED) 판정하지 않은 T1·T2 운동 */
   readonly pendingProgressions: { sessionExerciseId: SessionExerciseId; exerciseId: string; tier: Tier }[];
 };
 
@@ -492,7 +522,11 @@ export type CompleteSessionError =
  *   이미 값이 있는 운동은 건너뛴다(멱등성 보조 장치).
  * - U-22: INCREASE여도 세션 도중 사용자가 작업 중량을 바꿨다면(프로필 변경 번호가 세션 시작 스냅샷과 다름)
  *   덮어쓰지 않는다. 세션 스냅샷과 세트 기록은 어떤 경우에도 바꾸지 않는다.
- * - 세션 상태·판정 시각·프로필 변경은 한 트랜잭션이다.
+ * - H-22: T1·T2는 운동별로 모든 세트의 목표 달성(완료 + 실제 중량 ≥ 목표 + 실제 반복 ≥ 목표, AMRAP은 최소 반복)을
+ *   판정해 성공이면 currentTM에 운동별 고정 증량값(HYBRID_TM_INCREMENTS)을 더하고 TMChange를 남긴다.
+ *   같은 세션에 같은 운동이 T1·T2로 함께 있으면 둘 다 성공해야 하며 한 번만 증량한다.
+ *   이미 이 세션·운동의 이력이 있으면 증량하지 않는다(유일 인덱스와 함께 이중 방어).
+ * - 세션 상태·판정 시각·프로필·TM 이력 변경은 한 트랜잭션이다. 하나라도 실패하면 전부 롤백된다.
  */
 export function completeWorkoutSession(
   db: NsunsDatabase,
@@ -501,7 +535,7 @@ export function completeWorkoutSession(
 ): Promise<StorageResult<CompleteSessionOutcome, CompleteSessionError>> {
   type E = CompleteSessionError;
   return runStorage(() =>
-    db.transaction("rw", [db.workoutSessions, db.sessionExercises, db.setRecords, db.exerciseProfiles], async () => {
+    db.transaction("rw", [db.workoutSessions, db.sessionExercises, db.setRecords, db.exerciseProfiles, db.tmChanges], async () => {
       const detail = await loadSessionDetail(db, sessionId);
       if (!detail) return new ValidationStop<E>("SESSION_NOT_FOUND");
       if (detail.session.status !== "IN_PROGRESS") return new ValidationStop<E>("SESSION_NOT_IN_PROGRESS", detail.session.status);
@@ -547,7 +581,70 @@ export function completeWorkoutSession(
         t3Progressions.push({ sessionExerciseId: se.sessionExerciseId, exerciseId: se.exerciseId, decision: result.value, applied, skippedReason });
       }
 
-      // 2단계: 저장 (세션 → 판정 시각 → 프로필). 하나라도 실패하면 전부 롤백
+      // 1-2단계: T1·T2 목표 달성 판정 (쓰기 없음). 운동(exerciseId)별로 묶는다
+      const groups = new Map<string, SessionExerciseDetail[]>();
+      for (const item of detail.exercises) {
+        if (item.sessionExercise.tier === "T3" || item.sessionExercise.progressionEvaluatedAt !== null) continue;
+        groups.set(item.sessionExercise.exerciseId, [...(groups.get(item.sessionExercise.exerciseId) ?? []), item]);
+      }
+      const tmProgressions: TMProgressionOutcome[] = [];
+      const tmUpdates: { exerciseId: string; fromTM: number; toTM: number; unit: SessionExercise["weightUnit"]; sourceTier: Tier }[] = [];
+      for (const [exerciseId, items] of groups) {
+        const tiers = items.map((i) => i.sessionExercise.tier).sort();
+        const base = { exerciseId, tiers, sessionExerciseIds: items.map((i) => i.sessionExercise.sessionExerciseId) };
+        const profile = await db.exerciseProfiles.get(exerciseId);
+        if (!profile || profile.currentTM === null) return new ValidationStop<E>("PROGRESSION_EVALUATION_FAILED", `${exerciseId}: TM 없음`);
+        const hold = (status: TMProgressionOutcome["status"], reasons: TMProgressionOutcome["reasons"] = []): TMProgressionOutcome => ({
+          ...base,
+          status,
+          fromTM: profile.currentTM,
+          toTM: profile.currentTM,
+          unit: profile.weightUnit,
+          reasons,
+        });
+
+        const increment = HYBRID_TM_INCREMENTS[exerciseId];
+        if (!increment) {
+          tmProgressions.push(hold("NO_POLICY"));
+          continue;
+        }
+        if (increment.unit !== profile.weightUnit) {
+          tmProgressions.push(hold("UNIT_NOT_SUPPORTED"));
+          continue;
+        }
+        const existing = await db.tmChanges.where("exerciseId").equals(exerciseId).filter((c) => c.sourceSessionId === sessionId).first();
+        if (existing) {
+          tmProgressions.push(hold("ALREADY_APPLIED"));
+          continue;
+        }
+
+        const reasons: TMProgressionOutcome["reasons"] = [];
+        for (const { sessionExercise: se, sets } of items) {
+          const evaluated = evaluateTargetProgress(
+            sets.map((s) => ({
+              setNumber: s.setNumber,
+              completed: s.completed,
+              targetWeight: { value: s.targetWeight, unit: s.weightUnit },
+              targetReps: s.targetReps,
+              isAmrap: s.isAmrap,
+              actualWeight: s.actualWeight === null ? null : { value: s.actualWeight, unit: s.weightUnit },
+              actualReps: s.actualReps,
+            })),
+          );
+          if (!evaluated.ok) return new ValidationStop<E>("PROGRESSION_EVALUATION_FAILED", `${se.tier}:${exerciseId}: ${evaluated.error}`);
+          reasons.push(...evaluated.value.reasons.map((r) => ({ tier: se.tier, ...r })));
+        }
+        if (reasons.length > 0) {
+          tmProgressions.push(hold("HELD", reasons));
+          continue;
+        }
+        const next = nextTrainingMax({ value: profile.currentTM, unit: profile.weightUnit }, increment);
+        if (!next.ok) return new ValidationStop<E>("PROGRESSION_EVALUATION_FAILED", `${exerciseId}: ${next.error}`);
+        tmUpdates.push({ exerciseId, fromTM: profile.currentTM, toTM: next.value.value, unit: profile.weightUnit, sourceTier: tiers[0] });
+        tmProgressions.push({ ...base, status: "INCREASED", fromTM: profile.currentTM, toTM: next.value.value, unit: profile.weightUnit, reasons: [] });
+      }
+
+      // 2단계: 저장 (세션 → 판정 시각 → 프로필 → TM 이력). 하나라도 실패하면 전부 롤백
       const session: WorkoutSession = { ...detail.session, status: "COMPLETED", completedAt: now };
       await db.workoutSessions.put(session);
       for (const outcome of t3Progressions) {
@@ -556,11 +653,38 @@ export function completeWorkoutSession(
       for (const update of profileUpdates) {
         await db.exerciseProfiles.update(update.exerciseId, { t3WorkingWeight: update.value, t3WorkingWeightRevision: update.revision, updatedAt: now });
       }
+      // 증량 정책으로 판정한 T1·T2 운동(INCREASED·HELD·ALREADY_APPLIED)만 판정 시각을 남긴다
+      for (const outcome of tmProgressions) {
+        if (outcome.status === "NO_POLICY" || outcome.status === "UNIT_NOT_SUPPORTED") continue;
+        for (const sessionExerciseId of outcome.sessionExerciseIds) {
+          await db.sessionExercises.update(sessionExerciseId, { progressionEvaluatedAt: now });
+        }
+      }
+      for (const update of tmUpdates) {
+        // 순서: 프로필 → 이력. 이력 쓰기가 실패(중복 키 포함)하면 트랜잭션 전체가 롤백된다
+        await db.exerciseProfiles.update(update.exerciseId, { currentTM: update.toTM, updatedAt: now });
+        await db.tmChanges.add({
+          tmChangeId: createId(),
+          exerciseId: update.exerciseId,
+          weightUnit: update.unit,
+          fromTM: update.fromTM,
+          toTM: update.toTM,
+          reason: "SESSION_PROGRESSION",
+          sourceSessionId: sessionId,
+          sourceTier: update.sourceTier,
+          ruleId: TM_PROGRESSION_RULE.ruleId,
+          ruleVersion: TM_PROGRESSION_RULE.ruleVersion,
+          appliedAt: now,
+        });
+      }
 
+      const pendingIds = new Set(
+        tmProgressions.filter((o) => o.status === "NO_POLICY" || o.status === "UNIT_NOT_SUPPORTED").flatMap((o) => o.sessionExerciseIds),
+      );
       const pendingProgressions = detail.exercises
-        .filter((e) => e.sessionExercise.tier !== "T3")
+        .filter((e) => pendingIds.has(e.sessionExercise.sessionExerciseId))
         .map(({ sessionExercise: se }) => ({ sessionExerciseId: se.sessionExerciseId, exerciseId: se.exerciseId, tier: se.tier }));
-      return { session, t3Progressions, pendingProgressions };
+      return { session, t3Progressions, tmProgressions, pendingProgressions };
     }),
   );
 }

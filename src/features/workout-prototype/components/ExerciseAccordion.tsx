@@ -29,6 +29,8 @@ type ExerciseAccordionProps = {
   dataLabel?: string;
   /** 세트 완료 전 목표 중량 수정 허용 여부. 기본 true (프로토타입) */
   allowTargetEdit?: boolean;
+  /** 실제 중량·반복 +/- 버튼 (실제 기록 화면). 생략하면 숫자 입력칸만 (프로토타입) */
+  stepper?: { readonly weightStep: number; readonly unitLabel: string };
 };
 
 /**
@@ -49,6 +51,7 @@ export function ExerciseAccordion({
   onRequestReset,
   dataLabel = `${MOCK_LABEL} 세트·중량`,
   allowTargetEdit = true,
+  stepper,
 }: ExerciseAccordionProps) {
   const [lockNotice, setLockNotice] = useState<string | null>(null);
 
@@ -169,15 +172,18 @@ export function ExerciseAccordion({
         )}
 
         <div className="@container mt-3">
-          <div
-            aria-hidden="true"
-            className="hidden grid-cols-[32px_minmax(0,1fr)_144px_48px] gap-x-2 px-2 pb-1 text-[11px] font-medium tracking-wide text-fg-secondary @min-[360px]:grid"
-          >
-            <span className="text-center">SET</span>
-            <span>목표</span>
-            <span>실제 중량 · 횟수</span>
-            <span className="text-center">완료</span>
-          </div>
+          {/* +/- 버튼 모드에서는 입력이 둘째 줄이라 4열 머리글을 쓰지 않는다 */}
+          {!stepper && (
+            <div
+              aria-hidden="true"
+              className="hidden grid-cols-[32px_minmax(0,1fr)_144px_48px] gap-x-2 px-2 pb-1 text-[11px] font-medium tracking-wide text-fg-secondary @min-[360px]:grid"
+            >
+              <span className="text-center">SET</span>
+              <span>목표</span>
+              <span>실제 중량 · 횟수</span>
+              <span className="text-center">완료</span>
+            </div>
+          )}
           <ol className="space-y-2" aria-label={`${exercise.exerciseName} 세트 목록`}>
             {exercise.sets.map((set) => {
               const key = toSetKey(exercise.sessionExerciseId, set.setNumber);
@@ -189,6 +195,7 @@ export function ExerciseAccordion({
                   isCurrent={currentSetNumber === set.setNumber}
                   editable={canEditSet(sessionStatus, set)}
                   allowTargetEdit={allowTargetEdit}
+                  stepper={stepper}
                   saving={savingKeys.includes(key)}
                   errors={errors[key]}
                   onDraftChange={(field, value) => onDraftChange(set.setNumber, field, value)}
